@@ -86,3 +86,9 @@ test('avstånd till linje i meter', () => {
   const d = distToLines([18.0504, 59.3401], [[[18.05, 59.34], [18.0508, 59.34]]]);
   assert.ok(d > 10 && d < 12, String(d));
 });
+
+test('tidsfönster utan maxtid gör inte platsen förbjuden', () => {
+  const [s] = buildSegments({ features: [{ id: 'x', geometry: line(18.05, 59.34, 0.0008), properties: { STREET_NAME: 'Testgatan', START_TIME: 700, END_TIME: 1900 } }] }, { features: [] });
+  const ev = evaluate(s, at(2026, 10, 12, 1), 60);
+  assert.equal(ev.status, 'free');
+});

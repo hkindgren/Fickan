@@ -169,7 +169,8 @@ export function normalize(f, kind) {
   const win = parseHM(p.START_TIME) !== null && parseHM(p.END_TIME) !== null
     ? { from: parseHM(p.START_TIME), to: parseHM(p.END_TIME), wd: weekdayIndex(p.START_WEEKDAY) } : null;
   if (maxH > 0) seg.rules.push({ k: 'maxtid', h: maxH, win });
-  else if (win && kind === 'ptillaten') seg.rules.push({ k: 'fonster', win }); // parkering tillåten bara inom tidsfönstret (verifieras mot riktig data)
+  // Tidsfönster utan maxtid blockerar aldrig parkering. Tilläggstavlan begränsar bara under angiven tid.
+  else if (win && kind === 'ptillaten') seg.note = `Tidsuppgift i stadens data: ${winText(win)}.`;
   return seg;
 }
 const carOK = v => !v || /(personbil|bil$|fordon|^bil)/i.test(v) && !/(lastbil|buss|motorcykel|moped)/i.test(v);
@@ -285,9 +286,10 @@ export function ruleFacts(seg) {
     }
     if (r.k === 'maxtid') out.push(`Längst ${r.h} ${r.h === 1 ? 'timme' : 'timmar'} i följd${r.win ? ' ' + winText(r.win) : ''}.`);
     if (r.k === 'fonster') out.push(`Parkering tillåten ${winText(r.win)}.`);
-    if (r.k === 'servicedag') out.push(`Servicedag ${WD_LONG[r.wd]} ${pad(Math.floor(r.from))}–${pad(Math.floor(r.to))}${r.m1 ? ` (månad ${r.m1}–${r.m2})` : ''}. Då får ingen bil stå här.`);
+    if (r.k === 'servicedag') out.push(`Förbud att parkera ${WD_LONG[r.wd]}ar ${pad(Math.floor(r.from))}–${pad(Math.floor(r.to))} (servicedag)${r.m1 ? `, månad ${r.m1}–${r.m2}` : ''}. Övrig tid gäller reglerna ovan.`);
   }
   if (!seg.rules.some(r => r.k === 'avgift')) out.unshift('Ingen avgift.');
+  if (seg.note) out.push(seg.note);
   return out;
 }
 const WHY = {

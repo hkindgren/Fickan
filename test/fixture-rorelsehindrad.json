@@ -1,0 +1,171 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "LTFR_P_RORELSEHINDRADE.6205721",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [18.089936, 59.296964],
+          [18.089853, 59.297003]
+        ]
+      },
+      "geometry_name": "GEOMETRY",
+      "properties": {
+        "FID": 6205721,
+        "FEATURE_OBJECT_ID": 9842924,
+        "FEATURE_VERSION_ID": 1,
+        "EXTENT_NO": 1,
+        "VALID_FROM": "2016-11-06T23:00:00Z",
+        "CITATION": "0180 2016-02649",
+        "STREET_NAME": "Nathorstvägen",
+        "CITY_DISTRICT": "Hammarbyhöjden",
+        "PARKING_DISTRICT": "Hammarbyhöjden",
+        "ADDRESS": "Nathorstvägen 21",
+        "VF_METER": 6,
+        "VF_PLATS_TYP": "Reserverad p-plats rörelsehindrad",
+        "RDT_URL": "https://rdt.transportstyrelsen.se/rdt/AF06_View.aspx?BeslutsMyndighetKod=0180&BeslutadAr=2016&LopNr=02649",
+        "PARKING_RATE": "taxa 4: 10 kr/tim vardagar 7-19, dag före helgdag 11-17, Boende: 500 kr/månad eller 35 kr/dygn"
+      },
+      "bbox": [18.089853, 59.296964, 18.089936, 59.297003]
+    },
+    {
+      "type": "Feature",
+      "id": "LTFR_P_RORELSEHINDRADE.6205722",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [18.093412, 59.296867],
+          [18.093512, 59.296851]
+        ]
+      },
+      "geometry_name": "GEOMETRY",
+      "properties": {
+        "FID": 6205722,
+        "FEATURE_OBJECT_ID": 9842937,
+        "FEATURE_VERSION_ID": 1,
+        "EXTENT_NO": 1,
+        "VALID_FROM": "2016-11-06T23:00:00Z",
+        "CITATION": "0180 2016-02653",
+        "STREET_NAME": "Olaus Magnus Väg",
+        "CITY_DISTRICT": "Hammarbyhöjden",
+        "PARKING_DISTRICT": "Hammarbyhöjden",
+        "ADDRESS": "Olaus Magnus Väg 44A",
+        "VF_METER": 6,
+        "VF_PLATS_TYP": "Reserverad p-plats rörelsehindrad",
+        "RDT_URL": "https://rdt.transportstyrelsen.se/rdt/AF06_View.aspx?BeslutsMyndighetKod=0180&BeslutadAr=2016&LopNr=02653",
+        "PARKING_RATE": "taxa 4: 10 kr/tim vardagar 7-19, dag före helgdag 11-17, Boende: 500 kr/månad eller 35 kr/dygn"
+      },
+      "bbox": [18.093412, 59.296851, 18.093512, 59.296867]
+    },
+    {
+      "type": "Feature",
+      "id": "LTFR_P_RORELSEHINDRADE.6205723",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [17.9792, 59.340189],
+          [17.979235, 59.340195],
+          [17.97924, 59.340195],
+          [17.979246, 59.340195],
+          [17.979344, 59.3402],
+          [17.979351, 59.3402],
+          [17.979357, 59.340199],
+          [17.979364, 59.340199],
+          [17.97937, 59.340198],
+          [17.979416, 59.340188]
+        ]
+      },
+      "geometry_name": "GEOMETRY",
+      "properties": {
+        "FID": 6205723,
+        "FEATURE_OBJECT_ID": 9842941,
+        "FEATURE_VERSION_ID": 1,
+        "EXTENT_NO": 1,
+        "VALID_FROM": "2016-09-29T22:00:00Z",
+        "CITATION": "0180 2016-02656",
+        "STREET_NAME": "Hoburgsstigen",
+        "CITY_DISTRICT": "Traneberg",
+        "PARKING_DISTRICT": "Traneberg",
+        "ADDRESS": "Hoburgsstigen 5A - 7",
+        "VF_METER": 12,
+        "VF_PLATS_TYP": "Reserverad p-plats rörelsehindrad",
+        "RDT_URL": "https://rdt.transportstyrelsen.se/rdt/AF06_View.aspx?BeslutsMyndighetKod=0180&BeslutadAr=2016&LopNr=02656",
+        "PARKING_RATE": "taxa 4: 10 kr/tim vardagar 7-19, dag före helgdag 11-17, Boende: 500 kr/månad eller 35 kr/dygn"
+      },
+      "bbox": [17.9792, 59.340188, 17.979416, 59.3402]
+    },
+    {
+      "type": "Feature",
+      "id": "LTFR_P_RORELSEHINDRADE.6205724",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [18.101559, 59.291045],
+          [18.101602, 59.291034],
+          [18.101655, 59.291024]
+        ]
+      },
+      "geometry_name": "GEOMETRY",
+      "properties": {
+        "FID": 6205724,
+        "FEATURE_OBJECT_ID": 9842962,
+        "FEATURE_VERSION_ID": 1,
+        "EXTENT_NO": 1,
+        "VALID_FROM": "2016-11-06T23:00:00Z",
+        "CITATION": "0180 2016-02661",
+        "STREET_NAME": "Paternostervägen",
+        "CITY_DISTRICT": "Hammarbyhöjden",
+        "PARKING_DISTRICT": "Hammarbyhöjden",
+        "ADDRESS": "Paternostervägen 52",
+        "VF_METER": 6,
+        "VF_PLATS_TYP": "Reserverad p-plats rörelsehindrad",
+        "RDT_URL": "https://rdt.transportstyrelsen.se/rdt/AF06_View.aspx?BeslutsMyndighetKod=0180&BeslutadAr=2016&LopNr=02661",
+        "PARKING_RATE": "taxa 4: 10 kr/tim vardagar 7-19, dag före helgdag 11-17, Boende: 500 kr/månad eller 35 kr/dygn"
+      },
+      "bbox": [18.101559, 59.291024, 18.101655, 59.291045]
+    },
+    {
+      "type": "Feature",
+      "id": "LTFR_P_RORELSEHINDRADE.6205725",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [18.047509, 59.294253],
+          [18.047589, 59.294233],
+          [18.047683, 59.294209]
+        ]
+      },
+      "geometry_name": "GEOMETRY",
+      "properties": {
+        "FID": 6205725,
+        "FEATURE_OBJECT_ID": 9844144,
+        "FEATURE_VERSION_ID": 1,
+        "EXTENT_NO": 1,
+        "VALID_FROM": "2016-12-14T23:00:00Z",
+        "CITATION": "0180 2016-02819",
+        "STREET_NAME": "Sandfjärdsgatan",
+        "CITY_DISTRICT": "Årsta",
+        "PARKING_DISTRICT": "Årsta",
+        "ADDRESS": "Sandfjärdsgatan 26B",
+        "VF_METER": 12,
+        "VF_PLATS_TYP": "Reserverad p-plats rörelsehindrad",
+        "RDT_URL": "https://rdt.transportstyrelsen.se/rdt/AF06_View.aspx?BeslutsMyndighetKod=0180&BeslutadAr=2016&LopNr=02819",
+        "PARKING_RATE": "taxa 4: 10 kr/tim vardagar 7-19, dag före helgdag 11-17, Boende: 500 kr/månad eller 35 kr/dygn"
+      },
+      "bbox": [18.047509, 59.294209, 18.047683, 59.294253]
+    }
+  ],
+  "totalFeatures": 2045,
+  "numberMatched": 2045,
+  "numberReturned": 5,
+  "timeStamp": "2023-07-12T10:56:10.467Z",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:EPSG::4326"
+    }
+  },
+  "bbox": [17.9792, 59.291024, 18.101655, 59.3402]
+}

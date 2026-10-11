@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fickan</title>
+<meta name="description" content="Parkeringskarta för Stockholm: regler, priser och bästa fickan nära ditt mål.">
+<meta name="theme-color" content="#0a5bb5">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a5bb5'/%3E%3Ctext x='16' y='25' text-anchor='middle' font-family='Arial' font-weight='700' font-size='24' fill='%23fff'%3EP%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="./" aria-label="Fickan"><span class="p" aria-hidden="true">P</span><span>Fickan</span></a>
+  <form class="search" id="searchForm" role="search" autocomplete="off">
+    <input id="q" type="search" placeholder="Vart ska du? T.ex. Döbelnsgatan 12" aria-label="Adress">
+    <button type="submit" class="btn primary">Sök</button>
+    <ul class="suggest" id="suggest" hidden></ul>
+  </form>
+  <button class="icon" id="locate" type="button" aria-label="Min plats" title="Min plats">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <button class="icon" id="openSettings" type="button" aria-label="Inställningar" title="Inställningar">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+  </button>
+</header>
+
+<main class="app">
+  <div class="mapwrap">
+    <div id="map" aria-label="Karta"></div>
+    <div class="status" id="status" hidden></div>
+    <div class="legend">
+      <span><i style="background:var(--free)"></i>Gratis</span>
+      <span><i style="background:var(--paid)"></i>Avgift</span>
+      <span><i style="background:var(--cond)"></i>Villkor</span>
+      <span><i style="background:var(--stop)"></i>Förbjudet nu</span>
+      <span><i class="dash"></i>Rörelsehindrad</span>
+    </div>
+  </div>
+
+  <aside class="panel" id="panel">
+    <section id="welcome" class="welcome" hidden>
+      <h2>Lägg in din API-nyckel</h2>
+      <p>Fickan läser parkeringsreglerna direkt från Stockholms stad. Det kräver en gratis nyckel.</p>
+      <ol>
+        <li>Begär en nyckel på <a href="https://openparking.stockholm.se/Home/Key" target="_blank" rel="noopener">openparking.stockholm.se</a>.</li>
+        <li>Klistra in den här. Den sparas bara i din webbläsare.</li>
+      </ol>
+      <form id="welcomeKeyForm" class="row">
+        <input id="welcomeKey" type="text" placeholder="API-nyckel" aria-label="API-nyckel" spellcheck="false">
+        <button class="btn primary" type="submit">Spara</button>
+      </form>
+    </section>
+
+    <section aria-label="När och hur länge" class="when">
+      <div class="row">
+        <label class="field"><span class="lbl">Dag</span><select id="day"></select></label>
+        <div class="field grow">
+          <span class="lbl">Ankomst</span>
+          <div class="row nowrap"><output class="timeout" id="timeOut">00:00</output><input type="range" id="time" min="0" max="95" step="1" aria-label="Ankomsttid"></div>
+        </div>
+        <button class="btn" id="now" type="button">Nu</button>
+      </div>
+      <div class="field">
+        <span class="lbl">Hur länge</span>
+        <div class="chips" id="dur"></div>
+      </div>
+    </section>
+
+    <section id="detail" hidden aria-live="polite"></section>
+
+    <section aria-label="Förslag" class="results">
+      <div class="dest" id="destLine">Sök en adress eller tryck på kartan.</div>
+      <div class="insight" id="insight" hidden></div>
+      <div class="row between">
+        <span class="lbl">Inom 500 m</span>
+        <div class="tabs" id="sort">
+          <button type="button" data-k="smart" aria-pressed="true">Smart</button>
+          <button type="button" data-k="near" aria-pressed="false">Närmast</button>
+          <button type="button" data-k="cheap" aria-pressed="false">Billigast</button>
+          <button type="button" data-k="chance" aria-pressed="false">Chans</button>
+        </div>
+      </div>
+      <ol class="list" id="list"></ol>
+    </section>
+
+    <footer class="foot">
+      Regler från Stockholms stads lokala trafikföreskrifter (LTF-Tolken). "Chans" är en uppskattning, inte livedata. Skylten på plats gäller alltid.
+      Karta © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.
+    </footer>
+  </aside>
+</main>
+
+<dialog id="settings">
+  <form method="dialog" class="settings">
+    <h2>Inställningar</h2>
+    <label class="field"><span class="lbl">API-nyckel (Stockholms stad)</span>
+      <input id="apiKey" type="text" spellcheck="false" placeholder="Klistra in nyckeln">
+    </label>
+    <p class="muted">Sparas bara i den här webbläsaren. <a href="https://openparking.stockholm.se/Home/Key" target="_blank" rel="noopener">Begär nyckel</a></p>
+    <fieldset>
+      <legend class="lbl">Boendeparkering</legend>
+      <p class="muted">Kryssa i områden där du har boendetillstånd, så räknas avgiften bort där.</p>
+      <div id="boendeList" class="boende"></div>
+    </fieldset>
+    <label class="toggle"><input type="checkbox" id="hcp"> Jag har parkeringstillstånd för rörelsehindrade</label>
+    <div class="row end">
+      <button class="btn" value="cancel">Avbryt</button>
+      <button class="btn primary" value="save" id="saveSettings">Spara</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

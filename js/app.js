@@ -1,7 +1,7 @@
 import {
   buildSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
-} from './rules.js';
+} from './rules.js?v=202610122218';
 
 const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';

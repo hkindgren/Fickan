@@ -1,7 +1,7 @@
 import {
   buildSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
-} from './rules.js?v=202610122218';
+} from './rules.js?v=202610122220';
 
 const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';
@@ -148,7 +148,7 @@ const okFor = ev => ev.status !== 'stop';
 function ranked() {
   const list = pool().filter(s => okFor(st.results.get(s.id).ev) && walk(s) <= RADIUS);
   const score = s => {
-    const { ev, ch } = st.results.get(s.id), pen = ev.status === 'cond' ? 40 : 0;
+    const { ev, ch } = st.results.get(s.id), pen = (ev.status === 'cond' ? 40 : 0) + (s.cls === 'load' ? 60 : 0);
     if (st.sort === 'near') return walk(s) + pen;
     if (st.sort === 'cheap') return ev.cost * 1000 + walk(s) + pen * 10;
     if (st.sort === 'chance') return -ch.score * 1000 + walk(s) / 10 + pen;
@@ -214,7 +214,7 @@ function renderList(r) {
     const { ev, ch } = st.results.get(s.id);
     return `<li><button class="item" type="button" data-id="${esc(s.id)}" aria-current="${st.sel === s.id}">
       <span class="rank" style="background:${COL[look(ev)]}">${i + 1}</span>
-      <span style="min-width:0"><div class="name">${esc(s.address)}</div><div class="sub">${esc(shortStatus(ev))} · ${walk(s)} m · chans ${ch.label.toLowerCase()}</div></span>
+      <span style="min-width:0"><div class="name">${esc(s.address)}${s.cls === 'load' ? ' <small class="tag">lastplats</small>' : ''}</div><div class="sub">${esc(shortStatus(ev))} · ${walk(s)} m · chans ${ch.label.toLowerCase()}</div></span>
       <span class="price">${ev.cost} kr<small>${ev.status === 'cond' ? 'till flytt' : durText(st.dur)}</small></span>
     </button></li>`;
   }).join('') || (st.key && st.segs.length ? '<li class="empty">Inga tillåtna platser inom 500 m vid den tiden.</li>' : '');
@@ -242,6 +242,7 @@ function renderDetail() {
       <button class="close" type="button" id="closeDetail" aria-label="Stäng">×</button></div>
     <div class="row nowrap"><span class="pill ${PILL[look(ev)][0]}">${PILL[look(ev)][1]}</span><span class="chance">Chans att hitta plats: ${ch.label} (uppskattning)</span></div>
     <div class="verdict">${esc(verdict(ev, st.dur))}</div>
+    ${s.cls === 'load' ? '<div class="warn">Lastplats. Stadens data kan sakna vissa tider, så kontrollera skylten innan du parkerar.</div>' : ''}
     <span class="lbl">Så borde skyltarna se ut</span>
     <div class="signs">${signPlates(s).map(g => `<figure class="sign">${g.sign === 'P' ? SVG_P : SVG_NOP}${g.plates.map(plateHTML).join('')}</figure>`).join('')}</div>
     <span class="lbl">Tolkning</span>

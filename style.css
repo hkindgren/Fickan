@@ -135,3 +135,6 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 .toggle{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer}
 .toggle input{accent-color:var(--accent);width:16px;height:16px}
 @media (prefers-reduced-motion: reduce){*{scroll-behavior:auto!important}}
+
+.tag{font-family:var(--font-body);font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--load);border:1px solid var(--load);border-radius:4px;padding:0 4px;vertical-align:2px}
+.warn{border-left:3px solid var(--cond);padding:4px 0 4px 10px;font-size:14px}

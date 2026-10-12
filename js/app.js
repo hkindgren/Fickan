@@ -1,5 +1,5 @@
 import {
-  buildSegments, normalize, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
+  buildSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
 } from './rules.js';
 
@@ -7,7 +7,8 @@ const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';
 const RADIUS = 500;
 const DURS = [30, 60, 120, 180, 240, 480, 720];
-const COL = { free: 'var(--free)', paid: 'var(--paid)', cond: 'var(--cond)', stop: 'var(--stop)' };
+const COL = { free: 'var(--free)', paid: 'var(--paid)', cond: 'var(--cond)', stop: 'var(--stop)', load: 'var(--load)' };
+const look = ev => ev.status === 'stop' && ev.first && ev.first.why === 'lastzon' ? 'load' : ev.status;
 const CSS = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -64,9 +65,10 @@ async function fetchRules(lngLat) {
   const k = lngLat.map(v => v.toFixed(4)).join(',');
   if (cache.has(k)) return cache.get(k);
   const q = `within?radius=${RADIUS}&lat=${lngLat[1]}&lng=${lngLat[0]}&outputFormat=json&apiKey=${encodeURIComponent(st.key)}`;
-  const [p, sd, hcp] = await Promise.all(['ptillaten', 'servicedagar', 'prorelsehindrad'].map(ds => getJSON(API + ds + '/' + q)));
+  // Servicetider och platser för rörelsehindrade finns redan i ptillaten, så ett anrop räcker.
+  const p = await getJSON(API + 'ptillaten/' + q);
   if (!p || !Array.isArray(p.features)) throw new Error('badkey');
-  const out = { p, sd, hcp };
+  const out = buildSegments(p);
   cache.set(k, out);
   return out;
 }
@@ -87,8 +89,8 @@ async function setDest(lngLat, label, sub) {
   showStatus('Hämtar parkeringsregler…');
   try {
     const d = await fetchRules(lngLat);
-    st.segs = buildSegments(d.p, d.sd);
-    st.hcpSegs = (d.hcp?.features || []).map(f => normalize(f, 'prorelsehindrad')).filter(Boolean);
+    st.segs = d.car;
+    st.hcpSegs = d.hcp;
     st.segs.forEach(s => s.pdistrict && st.districts.add(s.pdistrict));
     store.set('districts', [...st.districts].sort());
     showStatus(st.segs.length ? '' : 'Inga parkeringsregler hittades inom 500 m.');
@@ -175,7 +177,7 @@ function renderMap(r) {
     const { ev } = st.results.get(s.id), sel = s.id === st.sel;
     const ll = s.lines.map(line => line.map(([x, y]) => [y, x]));
     if (sel) L.polyline(ll, { color: CSS('--ink'), weight: 12, opacity: .9, interactive: false }).addTo(segLayer);
-    L.polyline(ll, { color: CSS('--' + ev.status), weight: 6, opacity: .95, lineCap: 'round', bubblingMouseEvents: false })
+    L.polyline(ll, { color: CSS('--' + look(ev)), weight: 6, opacity: .95, lineCap: 'round', bubblingMouseEvents: false })
       .on('click', () => select(s.id))
       .bindTooltip(`${s.address}: ${shortStatus(ev)}`, { sticky: true })
       .addTo(segLayer);
@@ -186,7 +188,7 @@ function renderMap(r) {
   }
   r.slice(0, 5).forEach((s, i) => {
     const { ev } = st.results.get(s.id);
-    L.marker([s.mid[1], s.mid[0]], { bubblingMouseEvents: false, icon: L.divIcon({ className: '', html: `<div class="rankpin" style="background:${COL[ev.status]}">${i + 1}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) })
+    L.marker([s.mid[1], s.mid[0]], { bubblingMouseEvents: false, icon: L.divIcon({ className: '', html: `<div class="rankpin" style="background:${COL[look(ev)]}">${i + 1}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) })
       .on('click', () => select(s.id)).addTo(topLayer);
   });
 }
@@ -211,7 +213,7 @@ function renderList(r) {
   $('list').innerHTML = r.slice(0, 12).map((s, i) => {
     const { ev, ch } = st.results.get(s.id);
     return `<li><button class="item" type="button" data-id="${esc(s.id)}" aria-current="${st.sel === s.id}">
-      <span class="rank" style="background:${COL[ev.status]}">${i + 1}</span>
+      <span class="rank" style="background:${COL[look(ev)]}">${i + 1}</span>
       <span style="min-width:0"><div class="name">${esc(s.address)}</div><div class="sub">${esc(shortStatus(ev))} · ${walk(s)} m · chans ${ch.label.toLowerCase()}</div></span>
       <span class="price">${ev.cost} kr<small>${ev.status === 'cond' ? 'till flytt' : durText(st.dur)}</small></span>
     </button></li>`;
@@ -219,7 +221,7 @@ function renderList(r) {
   $('list').querySelectorAll('.item').forEach(b => b.onclick = () => select(b.dataset.id));
 }
 
-const PILL = { free: ['s-free', 'Gratis'], paid: ['s-paid', 'Avgift'], cond: ['s-cond', 'Villkor'], stop: ['s-stop', 'Förbjudet nu'] };
+const PILL = { free: ['s-free', 'Gratis'], paid: ['s-paid', 'Avgift'], cond: ['s-cond', 'Villkor'], stop: ['s-stop', 'Förbjudet nu'], load: ['s-load', 'Lastplats nu'] };
 const SVG_P = `<svg viewBox="0 0 60 60" width="56" height="56" aria-hidden="true"><rect x="1.5" y="1.5" width="57" height="57" rx="7" fill="var(--sign-blue)" stroke="var(--sign-white)" stroke-width="2.5"/><text x="30" y="47" text-anchor="middle" font-family="Barlow Condensed,Arial Narrow,sans-serif" font-weight="700" font-size="46" fill="var(--sign-white)">P</text></svg>`;
 const SVG_NOP = `<svg viewBox="0 0 60 60" width="56" height="56" aria-hidden="true"><circle cx="30" cy="30" r="27" fill="var(--sign-blue)" stroke="var(--sign-red)" stroke-width="6"/><line x1="12" y1="12" x2="48" y2="48" stroke="var(--sign-red)" stroke-width="6"/></svg>`;
 function plateHTML(p) {
@@ -233,21 +235,20 @@ function renderDetail() {
   const s = pool().find(x => x.id === st.sel);
   if (!s) { box.hidden = true; return; }
   const { ev, ch } = st.results.get(s.id);
-  const sds = s.rules.filter(r => r.k === 'servicedag' && r.rdt);
   box.hidden = false;
   box.innerHTML = `
     <div class="detail-head"><div><h2>${esc(s.address)}</h2>
       <div class="sub">${esc([s.district, s.type, `ca ${s.spots} platser`, `${walk(s)} m från målet`].filter(Boolean).join(' · '))}</div></div>
       <button class="close" type="button" id="closeDetail" aria-label="Stäng">×</button></div>
-    <div class="row nowrap"><span class="pill ${PILL[ev.status][0]}">${PILL[ev.status][1]}</span><span class="chance">Chans att hitta plats: ${ch.label} (uppskattning)</span></div>
+    <div class="row nowrap"><span class="pill ${PILL[look(ev)][0]}">${PILL[look(ev)][1]}</span><span class="chance">Chans att hitta plats: ${ch.label} (uppskattning)</span></div>
     <div class="verdict">${esc(verdict(ev, st.dur))}</div>
     <span class="lbl">Så borde skyltarna se ut</span>
     <div class="signs">${signPlates(s).map(g => `<figure class="sign">${g.sign === 'P' ? SVG_P : SVG_NOP}${g.plates.map(plateHTML).join('')}</figure>`).join('')}</div>
     <span class="lbl">Tolkning</span>
     <ul class="facts">${ruleFacts(s).map(f => `<li>${esc(f)}</li>`).join('')}</ul>
     ${s.rate ? `<div class="src">Stadens taxetext: ${esc(s.rate.raw)}</div>` : ''}
-    <div class="src"${s.citation || s.rdt ? '' : ' hidden'}>Föreskrift ${esc(s.citation)}${s.rdt ? ` · <a href="${esc(s.rdt)}" target="_blank" rel="noopener">Läs beslutet</a>` : ''}${sds.map(r => ` · Servicedag: <a href="${esc(r.rdt)}" target="_blank" rel="noopener">${esc(r.citation || 'beslut')}</a>`).join('')}</div>
-    <details class="raw"><summary>Rådata från staden</summary><pre>${esc(JSON.stringify(s.p, null, 2))}</pre></details>`;
+    <div class="src"${s.citations.length ? '' : ' hidden'}>Föreskrifter: ${s.citations.map(c => c.u ? `<a href="${esc(c.u)}" target="_blank" rel="noopener">${esc(c.c)}</a>` : esc(c.c)).join(' · ')}</div>
+    <details class="raw"><summary>Rådata från staden (${s.raws.length})</summary><pre>${esc(JSON.stringify(s.raws.map(r => { const o = { ...r }; delete o.RDT_URL; return o; }), null, 2))}</pre></details>`;
   $('closeDetail').onclick = () => { st.sel = null; render(); };
 }
 function select(id) {

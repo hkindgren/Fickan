@@ -59,43 +59,75 @@ export function weekdayIndex(v) {
   return i < 0 ? null : i;
 }
 
-const DAYGROUPS = [
-  [/^alla\s+dagar/, ['v', 'l', 's']],
-  [/^dygnet\s+runt/, ['v', 'l', 's']],
-  [/^vardag(?:ar)?(?:\s+utom\s+dag\s+före\s+(?:sön-\s*och\s*)?helgdag(?:ar)?)?/, ['v']],
-  [/^(?:dag\s+före\s+(?:sön-\s*och\s*)?helgdag(?:ar)?|lördag(?:ar)?)/, ['l']],
-  [/^(?:sön-\s*och\s*helgdag(?:ar)?|helgdag(?:ar)?|söndag(?:ar)?)/, ['s']],
+// Taxetexter från staden finns i flera varianter, t.ex.
+//  "taxa 3: 20 kr/tim vardagar 7-19, 15 kr/tim dag före helgdag 11-17, Boende: 1100 kr/månad"
+//  "taxa 13: Vardagar utom vardag före sön- och helgdag klockan 7.00 - 19.00, 5 kr/tim. Vardag före sön- och helgdag klockan 11.00 - 17.00, 3,75 kr/tim."
+//  "taxa 2: 31 kr/tim vardagar 7-21 och dag före helgdag och helgdag 9-19, 20 kr/tim övrig tid"
+// Texten görs om till tecken för dagtyp, tidsfönster och pris som sedan paras ihop.
+const DAYWORDS = [
+  [/vardag(?:ar)?\s+utom\s+(?:vardag|dag)\s+före\s+(?:sön-\s*och\s*)?helgdag(?:ar)?/g, '\u0001V'],
+  [/(?:vardag|dag)\s+före\s+(?:sön-\s*och\s*)?helgdag(?:ar)?/g, '\u0001L'],
+  [/sön-\s*och\s*helgdag(?:ar)?/g, '\u0001S'],
+  [/alla\s+dagar|dygnet\s+runt/g, '\u0001A'],
+  [/vardag(?:ar)?/g, '\u0001V'],
+  [/lördag(?:ar)?/g, '\u0001L'],
+  [/helgdag(?:ar)?|söndag(?:ar)?/g, '\u0001S'],
+  [/övrig(?:a)?\s+tid(?:er)?/g, '\u0001O'],
 ];
-// "taxa 4: 10 kr/tim vardagar 7-19, dag före helgdag 11-17, Boende: 500 kr/månad eller 35 kr/dygn"
+const DAYCODE = { V: ['v'], L: ['l'], S: ['s'], A: ['v', 'l', 's'] };
 export function parseRate(text) {
   if (!text) return null;
-  const out = { raw: String(text), taxa: null, periods: [], other: 0, boende: /boende/i.test(text) };
-  let t = String(text).replace(/\s+/g, ' ').trim();
-  const tm = t.match(/taxa\s*([0-9A-Za-zÅÄÖåäö]+)/i);
+  const raw = String(text).replace(/\s+/g, ' ').trim();
+  const out = { raw, taxa: null, periods: [], other: 0, boende: /boende/i.test(raw), free: /avgiftsfri/i.test(raw) };
+  const tm = raw.match(/taxa\s*([0-9A-Za-zÅÄÖåäö]+)/i);
   if (tm) out.taxa = tm[1];
-  t = t.split(/boende/i)[0].replace(/^.*?taxa\s*[0-9A-Za-zÅÄÖåäö]+\s*:?\s*/i, '');
-  let rate = null;
-  for (let part of t.split(/[,;]/)) {
-    part = part.trim().toLowerCase();
-    if (!part) continue;
-    const rm = part.match(/(\d+(?:[.,]\d+)?)\s*kr\s*\/\s*(?:tim(?:me)?|h)\b/);
-    if (rm) { rate = parseFloat(rm[1].replace(',', '.')); part = part.replace(rm[0], ' ').replace(/\s+/g, ' ').trim(); }
-    if (/^övrig(?:a)?\s+tid/.test(part)) { if (rm) out.other = rate; continue; }
-    let rest = part, matched = false;
-    while (rest) {
-      let days = null, len = 0;
-      for (const [re, d] of DAYGROUPS) { const m = rest.match(re); if (m) { days = d; len = m[0].length; break; } }
-      if (!days) break;
-      rest = rest.slice(len).trim().replace(/^kl\.?\s*/, '');
-      const w = rest.match(/^(\d{1,2})(?:[.:](\d\d))?\s*[-–]\s*(\d{1,2})(?:[.:](\d\d))?/);
-      let from = 0, to = 24;
-      if (w) { from = +w[1] + (+w[2] || 0) / 60; to = +w[3] + (+w[4] || 0) / 60; rest = rest.slice(w[0].length).trim(); }
-      if (rate !== null) out.periods.push({ days, from, to, rate });
-      matched = true;
+  let t = raw.split(/boende\s*:/i)[0].replace(/^.*?taxa\s*[0-9A-Za-zÅÄÖåäö]+\s*:?\s*/i, '').toLowerCase();
+  t = t.replace(/\bkl(?:ockan|\.)?\s*/g, '');
+  for (const [re, code] of DAYWORDS) t = t.replace(re, code);
+  const TOK = /\u0001([VLSAO])|(\d+(?:,\d+)?|\d+\.\d+)\s*kr\s*\/\s*(?:tim(?:me)?|h)\b|(\d{1,2})(?:[.:](\d\d))?\s*[-–]\s*(\d{1,2})(?:[.:](\d\d))?/g;
+  let days = [], current = null, unrated = [], otherPending = false, m;
+  while ((m = TOK.exec(t))) {
+    if (m[1] === 'O') { if (current !== null && !unrated.length) { out.other = current; current = null; } else otherPending = true; continue; }
+    if (m[1]) { for (const d of DAYCODE[m[1]]) if (!days.includes(d)) days.push(d); continue; }
+    if (m[2]) {
+      const rate = parseFloat(m[2].replace(',', '.'));
+      if (otherPending) { out.other = rate; otherPending = false; continue; }
+      if (unrated.length) { unrated.forEach(p => { p.rate = rate; out.periods.push(p); }); unrated = []; current = null; }
+      else current = rate;
+      continue;
     }
-    if (!matched && rm && part === '') out.periods.push({ days: ['v', 'l', 's'], from: 0, to: 24, rate });
+    const from = +m[3] + (+m[4] || 0) / 60, to = +m[5] + (+m[6] || 0) / 60;
+    const p = { days: days.length ? days : ['v', 'l', 's'], from, to };
+    days = [];
+    if (current !== null) out.periods.push({ ...p, rate: current }); else unrated.push(p);
   }
+  if (!out.periods.length && current !== null && !out.free) out.periods.push({ days: ['v', 'l', 's'], from: 0, to: 24, rate: current });
   return out;
+}
+export function parseDayType(v) {
+  if (!v) return null;
+  const s = String(v).toLowerCase();
+  if (/utom/.test(s)) return ['v'];
+  if (/före/.test(s)) return ['l'];
+  if (/sön|helg/.test(s)) return ['s'];
+  if (/vardag/.test(s)) return ['v'];
+  return null;
+}
+const MONTHS = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
+// "Servicetid tisdag 09:00 - 14:00 utom under tiden 15 juni - 15 augusti"
+export function parseService(info, p = {}) {
+  const m = String(info || '').toLowerCase().match(/servicetid\s+(\w+)\s+(\d{1,2})[.:](\d\d)\s*[-–]\s*(\d{1,2})[.:](\d\d)(.*)$/);
+  let r = null;
+  if (m) r = { k: 'servicedag', wd: weekdayIndex(m[1]), from: +m[2] + +m[3] / 60, to: +m[4] + +m[5] / 60 };
+  else if (p.START_WEEKDAY != null && p.START_TIME != null && p.END_TIME != null) {
+    // Fälten beskriver när parkering är tillåten: från START_TIME till END_TIME samma veckodag veckan efter.
+    r = { k: 'servicedag', wd: weekdayIndex(p.START_WEEKDAY), from: parseHM(p.END_TIME), to: parseHM(p.START_TIME) };
+  }
+  if (!r || r.wd === null) return null;
+  const ex = m && m[6].match(/utom.*?(\d{1,2})\s+([a-zåäö]+)\s*[-–]\s*(\d{1,2})\s+([a-zåäö]+)/);
+  if (ex && MONTHS.includes(ex[2]) && MONTHS.includes(ex[4])) r.except = { m1: MONTHS.indexOf(ex[2]) + 1, d1: +ex[1], m2: MONTHS.indexOf(ex[4]) + 1, d2: +ex[3] };
+  else if (p.START_MONTH && p.END_MONTH && /utom/i.test(info || '')) r.except = { m1: p.START_MONTH, d1: p.START_DAY || 1, m2: p.END_MONTH, d2: p.END_DAY || 31 };
+  return r;
 }
 
 // ---------- geometri ----------
@@ -141,73 +173,99 @@ export function midpoint(lines) {
 }
 
 // ---------- normalisering ----------
-function serviceRule(p) {
-  const wd = weekdayIndex(p.START_WEEKDAY);
-  if (wd === null) return null;
-  return {
-    k: 'servicedag', wd,
-    from: parseHM(p.START_TIME) ?? 0, to: parseHM(p.END_TIME) ?? 6,
-    m1: p.START_MONTH ?? null, m2: p.END_MONTH ?? null, d1: p.START_DAY ?? null, d2: p.END_DAY ?? null,
-  };
+// Platstyper i stadens data (VF_PLATS_TYP / VEHICLE):
+//   "P Avgift, boende", "P-avgift endast besök"           vanlig parkering för bil
+//   "7", "17"  (VEHICLE fordon, DAY_TYPE + tider)          ändamålsplats, i praktiken lastplats under angiven tid
+//   "Reserverad p-plats rörelsehindrad"                     bara med tillstånd
+//   MC, cykel, moped, buss, beskickningsbil                 inte för vanlig bil
+export function classify(p) {
+  const type = String(p.VF_PLATS_TYP ?? ''), veh = String(p.VEHICLE ?? '').toLowerCase();
+  if (/rörelsehindrad/i.test(type) || veh === 'rörelsehindrade') return 'hcp';
+  if (veh && veh !== 'fordon' && veh !== 'personbil' && veh !== 'bil') return 'other';
+  if (/^\d+$/.test(type)) return 'load';
+  return 'car';
 }
-export function normalize(f, kind) {
+function cleanAddress(p) {
+  const a = p.ADDRESS && !/saknas/i.test(p.ADDRESS) ? p.ADDRESS : '';
+  return a || p.STREET_NAME || 'Okänd gata';
+}
+const geomKey = g => JSON.stringify(g?.coordinates ?? null);
+function rulesFrom(p, cls) {
+  const rules = [], rate = parseRate(p.PARKING_RATE);
+  if (rate && /endast besök/i.test(p.VF_PLATS_TYP || '')) rate.boende = false;
+  if (rate && rate.periods.length) rules.push({ k: 'avgift', ...rate });
+  const sd = parseService(p.OTHER_INFO, p);
+  if (sd) rules.push(sd);
+  const days = parseDayType(p.DAY_TYPE);
+  const hasWin = p.START_TIME != null && p.END_TIME != null && p.START_WEEKDAY == null;
+  const win = hasWin ? { days, from: parseHM(p.START_TIME), to: parseHM(p.END_TIME) } : null;
+  if (cls === 'load' && win) rules.push({ k: 'lastzon', win, code: p.VF_PLATS_TYP });
+  if (Number(p.MAX_HOURS) > 0) rules.push({ k: 'maxtid', h: Number(p.MAX_HOURS), win });
+  return { rules, rate };
+}
+const sameRule = (a, b) => JSON.stringify({ ...a, raw: 0 }) === JSON.stringify({ ...b, raw: 0 });
+export function normalize(f, kind = 'ptillaten') {
   const p = f.properties || {}, lines = geomLines(f.geometry);
   if (!lines.length) return null;
+  const cls = classify(p);
+  const { rules, rate } = rulesFrom(p, cls);
   const seg = {
-    id: String(f.id || `${kind}.${p.FID ?? Math.random()}`), kind, p, lines,
-    street: p.STREET_NAME || '', address: p.ADDRESS || p.STREET_NAME || 'Okänd adress',
+    id: String(f.id || `${kind}.${p.FID ?? Math.random()}`), kind, cls, p, raws: [p], lines,
+    street: p.STREET_NAME || '', address: cleanAddress(p),
     district: p.CITY_DISTRICT || '', pdistrict: p.PARKING_DISTRICT || '',
-    type: p.VF_PLATS_TYP || '', vehicle: p.VEHICLE || '', citation: p.CITATION || '', rdt: p.RDT_URL || '',
-    otherInfo: p.OTHER_INFO || '', rate: parseRate(p.PARKING_RATE), rules: [],
+    type: /^\d+$/.test(String(p.VF_PLATS_TYP ?? '')) ? 'Lastplats' : (p.VF_PLATS_TYP || ''),
+    vehicle: p.VEHICLE || '', citation: p.CITATION || '', rdt: p.RDT_URL || '',
+    otherInfo: p.OTHER_INFO || '', rate, rules,
+    citations: p.CITATION ? [{ c: p.CITATION, u: p.RDT_URL || '' }] : [],
   };
   seg.lengthM = lengthM(lines);
-  seg.spots = p.VF_PLATS_TYP && /rörelsehindrad/i.test(p.VF_PLATS_TYP) ? 1 : Math.max(1, Math.round(seg.lengthM / 5.5));
+  seg.spots = cls === 'hcp' ? Math.max(1, Math.round(seg.lengthM / 7)) : Math.max(1, Math.round(seg.lengthM / 5.5));
   seg.mid = midpoint(lines);
-  if (kind === 'servicedagar') { const r = serviceRule(p); if (r) seg.rules.push(r); return seg; }
-  if (seg.rate && seg.rate.periods.length) seg.rules.push({ k: 'avgift', ...seg.rate });
-  const maxH = Number(p.MAX_HOURS);
-  const win = parseHM(p.START_TIME) !== null && parseHM(p.END_TIME) !== null
-    ? { from: parseHM(p.START_TIME), to: parseHM(p.END_TIME), wd: weekdayIndex(p.START_WEEKDAY) } : null;
-  if (maxH > 0) seg.rules.push({ k: 'maxtid', h: maxH, win });
-  // Tidsfönster utan maxtid blockerar aldrig parkering. Tilläggstavlan begränsar bara under angiven tid.
-  else if (win && kind === 'ptillaten') seg.note = `Tidsuppgift i stadens data: ${winText(win)}.`;
   return seg;
 }
-const carOK = v => !v || /(personbil|bil$|fordon|^bil)/i.test(v) && !/(lastbil|buss|motorcykel|moped)/i.test(v);
-export function buildSegments(ptillaten, servicedagar) {
-  const segs = (ptillaten?.features || []).map(f => normalize(f, 'ptillaten')).filter(s => s && carOK(s.vehicle));
-  const sds = (servicedagar?.features || []).map(f => normalize(f, 'servicedagar')).filter(Boolean);
-  for (const s of segs) {
-    for (const sd of sds) {
-      if (!sd.rules.length) continue;
-      if (sd.street && s.street && sd.street.toLowerCase() !== s.street.toLowerCase()) continue;
-      if (distToLines(s.mid, sd.lines) > 12) continue;
-      const r = sd.rules[0];
-      if (!s.rules.some(x => x.k === 'servicedag' && x.wd === r.wd && x.from === r.from)) s.rules.push({ ...r, citation: sd.citation, rdt: sd.rdt });
-    }
+// Samma gatusträcka kan ha flera föreskrifter (avgift, servicetid, lastplats). De slås ihop per geometri.
+function merge(list) {
+  const by = new Map();
+  for (const s of list) {
+    const k = s.cls + '|' + geomKey({ coordinates: s.lines });
+    const prev = by.get(k);
+    if (!prev) { by.set(k, s); continue; }
+    for (const r of s.rules) if (!prev.rules.some(x => sameRule(x, r))) prev.rules.push(r);
+    prev.raws.push(s.p);
+    for (const c of s.citations) if (!prev.citations.some(x => x.c === c.c)) prev.citations.push(c);
+    if (!prev.rate && s.rate) prev.rate = s.rate;
+    if (prev.address === prev.street && s.address !== s.street) prev.address = s.address;
   }
-  return segs;
+  return [...by.values()];
+}
+export function buildSegments(ptillaten) {
+  const all = (ptillaten?.features || []).map(f => normalize(f)).filter(Boolean);
+  const merged = merge(all);
+  // En lastplats ligger ofta på samma sträcka som vanlig parkering. Utanför lasttiden gäller då stadens taxa.
+  return {
+    car: merged.filter(s => s.cls === 'car' || s.cls === 'load'),
+    hcp: merged.filter(s => s.cls === 'hcp'),
+  };
 }
 
 // ---------- utvärdering ----------
 const STEP = 15, HORIZON = 72 * 60;
-function seasonOK(r, t) {
-  if (r.m1 == null || r.m2 == null) return true;
+function inPeriod(e, t) {
   const md = (t.getMonth() + 1) * 100 + t.getDate();
-  const a = r.m1 * 100 + (r.d1 || 1), b = r.m2 * 100 + (r.d2 || 31);
+  const a = e.m1 * 100 + e.d1, b = e.m2 * 100 + e.d2;
   return a <= b ? md >= a && md <= b : md >= a || md <= b;
 }
 function winActive(win, t) {
   if (!win) return true;
-  if (win.wd !== null && win.wd !== undefined && t.getDay() !== win.wd) return false;
+  if (win.days && !win.days.includes(dayType(t))) return false;
   return inWin(hod(t), win.from, win.to);
 }
 function badAt(seg, t, used) {
   const h = hod(t);
   for (let i = 0; i < seg.rules.length; i++) {
     const r = seg.rules[i];
-    if (r.k === 'servicedag' && t.getDay() === r.wd && inWin(h, r.from, r.to) && seasonOK(r, t)) return { why: 'servicedag', r };
-    if (r.k === 'fonster' && !winActive(r.win, t)) return { why: 'fonster', r };
+    if (r.k === 'servicedag' && t.getDay() === r.wd && inWin(h, r.from, r.to) && !(r.except && inPeriod(r.except, t))) return { why: 'servicedag', r };
+    if (r.k === 'lastzon' && winActive(r.win, t)) return { why: 'lastzon', r };
     if (r.k === 'maxtid' && used && winActive(r.win, t)) { used[i] = (used[i] || 0) + STEP; if (used[i] > r.h * 60) return { why: 'maxtid', r }; }
   }
   return null;
@@ -273,29 +331,34 @@ function periodText(p) {
   const days = p.days.length === 3 ? 'alla dagar' : p.days.map(d => DAYWORD[d]).join(' och ');
   return `${days} ${hh(p.from)}–${hh(p.to)}`;
 }
-const winText = w => w ? `${w.wd != null ? WD_LONG[w.wd] + 'ar ' : ''}${hh(w.from)}–${hh(w.to)}` : 'hela dygnet';
+const hhmm = h => `${pad(Math.floor(h))}.${pad(Math.round((h % 1) * 60))}`;
+const daysText = d => !d || d.length === 3 ? 'alla dagar' : d.map(x => DAYWORD[x]).join(' och ');
+const winText = w => w ? `${daysText(w.days)} ${hh(w.from)}–${hh(w.to)}` : 'hela dygnet';
+const MON = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+const exceptText = e => e ? ` Gäller inte ${e.d1} ${MON[e.m1 - 1]}–${e.d2} ${MON[e.m2 - 1]}.` : '';
+const sdText = r => `${WD_LONG[r.wd]}ar ${hhmm(r.from)}–${hhmm(r.to)}`;
 export function ruleFacts(seg) {
   const out = [];
+  if (seg.cls === 'hcp') out.push('Reserverad för rörelsehindrade med parkeringstillstånd.');
   for (const r of seg.rules) {
     if (r.k === 'avgift') {
       const groups = {};
       r.periods.forEach(p => (groups[p.rate] = groups[p.rate] || []).push(periodText(p)));
-      Object.entries(groups).forEach(([rate, ps]) => out.push(`Avgift ${rate} kr/tim${r.taxa ? ` (taxa ${r.taxa})` : ''}: ${ps.join(', ')}.`));
-      out.push(r.other ? `Övrig tid ${r.other} kr/tim.` : 'Övrig tid gratis.');
+      Object.entries(groups).forEach(([rate, ps]) => out.push(`Avgift ${String(rate).replace('.', ',')} kr/tim${r.taxa ? ` (taxa ${r.taxa})` : ''}: ${ps.join(', ')}.`));
+      out.push(r.other ? `Övrig tid ${String(r.other).replace('.', ',')} kr/tim.` : 'Övrig tid gratis.');
       if (r.boende) out.push(`Boendeparkering gäller${seg.pdistrict ? ` (${seg.pdistrict})` : ''}.`);
     }
+    if (r.k === 'lastzon') out.push(`Lastplats ${winText(r.win)}. Då får du bara lasta och lossa. Övrig tid får du parkera.`);
     if (r.k === 'maxtid') out.push(`Längst ${r.h} ${r.h === 1 ? 'timme' : 'timmar'} i följd${r.win ? ' ' + winText(r.win) : ''}.`);
-    if (r.k === 'fonster') out.push(`Parkering tillåten ${winText(r.win)}.`);
-    if (r.k === 'servicedag') out.push(`Förbud att parkera ${WD_LONG[r.wd]}ar ${pad(Math.floor(r.from))}–${pad(Math.floor(r.to))} (servicedag)${r.m1 ? `, månad ${r.m1}–${r.m2}` : ''}. Övrig tid gäller reglerna ovan.`);
+    if (r.k === 'servicedag') out.push(`Förbud att parkera ${sdText(r)} (servicetid).${exceptText(r.except)}`);
   }
-  if (!seg.rules.some(r => r.k === 'avgift')) out.unshift('Ingen avgift.');
-  if (seg.note) out.push(seg.note);
+  if (!seg.rules.some(r => r.k === 'avgift')) out.unshift(seg.rate && seg.rate.free ? 'Avgiftsfri.' : 'Ingen avgift.');
   return out;
 }
 const WHY = {
-  servicedag: r => `servicedag ${WD_LONG[r.wd]} ${pad(Math.floor(r.from))}–${pad(Math.floor(r.to))}`,
+  servicedag: r => `servicetid ${sdText(r)}`,
   maxtid: r => `max ${r.h} tim`,
-  fonster: r => `tillåtet bara ${winText(r.win)}`,
+  lastzon: r => `lastplats ${winText(r.win)}`,
 };
 export function verdict(ev, durMin) {
   const { status, cost, first, okFrom, start } = ev;
@@ -303,32 +366,37 @@ export function verdict(ev, durMin) {
   if (status === 'free') return `Gratis i ${durText(durMin)}.${stay}`;
   if (status === 'paid') return `Ca ${cost} kr för ${durText(durMin)}.${stay}`;
   if (status === 'cond') return `Du får stå här, men måste flytta bilen senast ${clock(first.t, start)} (${WHY[first.why](first.r)}).${cost ? ` Kostar ca ${cost} kr fram till dess.` : ''}`;
-  return `Inte tillåtet nu: ${WHY[first.why](first.r)}.${okFrom ? ` Tillåtet igen från ${clock(okFrom, start)}.` : ''}`;
+  return `Inte tillåtet nu: ${WHY[first.why](first.r)}.${okFrom ? ` Du får parkera från ${clock(okFrom, start)}.` : ''}`;
 }
 export function shortStatus(ev) {
   const { status, first, okFrom, start } = ev;
   if (status === 'free') return first ? `Gratis · till ${clock(first.t, start)}` : 'Gratis';
   if (status === 'paid') return first ? `Avgift · till ${clock(first.t, start)}` : 'Avgift';
   if (status === 'cond') return `Flytta senast ${clock(first.t, start)}`;
-  return okFrom ? `Förbjudet till ${clock(okFrom, start)}` : 'Förbjudet';
+  const what = first && first.why === 'lastzon' ? 'Lastplats' : 'Förbjudet';
+  return okFrom ? `${what} till ${clock(okFrom, start)}` : what;
 }
 // Tilläggstavlor i skyltspråk: vardag "8-19", dag före helgdag "(9-15)", söndag i rött.
+function timesFor(daysList, from, to) {
+  const by = { v: null, l: null, s: null };
+  (daysList || ['v', 'l', 's']).forEach(d => { by[d] = `${hh(from)}-${hh(to)}`; });
+  return { times: by };
+}
 export function signPlates(seg) {
   const groups = [];
-  const fee = seg.rules.find(r => r.k === 'avgift'), max = seg.rules.find(r => r.k === 'maxtid'), win = seg.rules.find(r => r.k === 'fonster');
-  if (fee || max || win) {
-    const plates = [];
-    if (fee) {
-      plates.push({ text: 'Avgift' });
-      const by = { v: null, l: null, s: null };
-      fee.periods.forEach(p => p.days.forEach(d => { if (!by[d]) by[d] = `${hh(p.from)}-${hh(p.to)}`; }));
-      plates.push({ times: by });
-    }
-    if (max) { plates.push({ text: `${max.h} tim` }); if (max.win) plates.push({ text: `${hh(max.win.from)}-${hh(max.win.to)}` }); }
-    if (win) plates.push({ text: `${hh(win.win.from)}-${hh(win.win.to)}` });
-    if (fee && fee.boende) plates.push({ text: 'Boende' });
-    groups.push({ sign: 'P', plates });
-  } else groups.push({ sign: 'P', plates: [] });
-  seg.rules.filter(r => r.k === 'servicedag').forEach(r => groups.push({ sign: 'noP', plates: [{ text: `${WD_SIGN[r.wd]} ${Math.floor(r.from)}-${Math.floor(r.to)}` }] }));
+  const fee = seg.rules.find(r => r.k === 'avgift'), max = seg.rules.find(r => r.k === 'maxtid');
+  for (const r of seg.rules.filter(x => x.k === 'lastzon')) groups.push({ sign: 'P', plates: [{ text: 'Lastplats' }, timesFor(r.win.days, r.win.from, r.win.to)] });
+  const plates = [];
+  if (seg.cls === 'hcp') plates.push({ text: 'Rörelsehindrad' });
+  if (fee) {
+    plates.push({ text: 'Avgift' });
+    const by = { v: null, l: null, s: null };
+    fee.periods.forEach(p => p.days.forEach(d => { if (!by[d]) by[d] = `${hh(p.from)}-${hh(p.to)}`; }));
+    plates.push({ times: by });
+  }
+  if (max) { plates.push({ text: `${max.h} tim` }); if (max.win) plates.push(timesFor(max.win.days, max.win.from, max.win.to)); }
+  if (fee && fee.boende) plates.push({ text: 'Boende' });
+  groups.push({ sign: 'P', plates });
+  seg.rules.filter(r => r.k === 'servicedag').forEach(r => groups.push({ sign: 'noP', plates: [{ text: `${WD_SIGN[r.wd]} ${hh(r.from)}-${hh(r.to)}` }, ...(r.except ? [{ text: `utom ${r.except.d1}/${r.except.m1}–${r.except.d2}/${r.except.m2}` }] : [])] }));
   return groups;
 }

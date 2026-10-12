@@ -1,7 +1,9 @@
 import {
   buildSegments, generalSegments, attachService, forbudSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
-} from './rules.js?v=202610122314';
+} from './rules.js?v=202610122328';
+import { planRoutes, departures, navLinks } from './route.js?v=202610122328';
+import { GANTRIES } from './toll.js?v=202610122328';
 
 const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';
@@ -28,14 +30,21 @@ const st = window.fickanState = {
   segs: [], hcpSegs: [], sel: null, results: new Map(), districts: new Set(store.get('districts', [])),
 };
 
+// Resplanering (se längst ner)
+const trip = { from: null, fromLabel: '', routes: [], pick: 0, dep: 0, base: 0, abort: null, msg: '' };
+
 // ---------- karta ----------
 const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([59.334, 18.063], 13);
 // Kartstilar, som "Standard / Satellit / Ljus" i Google Maps. Valet sparas i webbläsaren.
 const OSM_ATTR = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
 const BASEMAPS = {
-  standard: L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20, subdomains: 'abcd', attribution: OSM_ATTR + ' © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>' }),
-  satellit: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Bilder © Esri, Maxar, Earthstar Geographics' }),
-  ljus: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, subdomains: 'abcd', attribution: OSM_ATTR + ' © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>' }),
+  standard: L.tileLayer(ESRI + 'World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Karta © Esri, HERE, Garmin, ' + OSM_ATTR }),
+  satellit: L.tileLayer(ESRI + 'World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Bilder © Esri, Maxar, Earthstar Geographics' }),
+  ljus: L.layerGroup([
+    L.tileLayer(ESRI + 'Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16, maxNativeZoom: 16, attribution: 'Karta © Esri, HERE, Garmin, ' + OSM_ATTR }),
+    L.tileLayer(ESRI + 'Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 16 }),
+  ]),
   osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: OSM_ATTR }),
 };
 const BASENAMES = { standard: 'Standard', satellit: 'Satellit', ljus: 'Ljus', osm: 'OpenStreetMap' };
@@ -50,13 +59,14 @@ baseCtl.onAdd = () => {
   div.innerHTML = Object.entries(BASENAMES).map(([k, n]) => `<button type="button" data-k="${k}" aria-pressed="${k === base}">${n}</button>`).join('');
   L.DomEvent.disableClickPropagation(div);
   div.querySelectorAll('button').forEach(b => b.onclick = () => {
-    map.removeLayer(BASEMAPS[base]); base = b.dataset.k; BASEMAPS[base].addTo(map); BASEMAPS[base].bringToBack();
+    map.removeLayer(BASEMAPS[base]); base = b.dataset.k; BASEMAPS[base].addTo(map); if (BASEMAPS[base].bringToBack) BASEMAPS[base].bringToBack();
     store.set('basemap', base); document.documentElement.dataset.basemap = base;
     div.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
   });
   return div;
 };
 baseCtl.addTo(map);
+const routeLayer = L.layerGroup().addTo(map);
 const segLayer = L.layerGroup().addTo(map);
 const topLayer = L.layerGroup().addTo(map);
 let destMarker = null;
@@ -140,6 +150,7 @@ function showStatus(text, err = false) {
 }
 
 async function setDest(lngLat, label, sub) {
+  trip.routes = []; trip.msg = ''; routeLayer.clearLayers();
   st.dest = lngLat; st.destLabel = label; st.destSub = sub; st.sel = null;
   if (destMarker) destMarker.remove();
   destMarker = L.marker([lngLat[1], lngLat[0]], { icon: L.divIcon({ className: 'destpin', html: PIN, iconSize: [30, 40], iconAnchor: [15, 39] }), interactive: false }).addTo(map);
@@ -226,7 +237,7 @@ function render() {
     return [s.id, { ev, ch: chance(s, ev) }];
   }));
   const r = st.dest ? ranked() : [];
-  renderWelcome(); renderMap(r); renderInsight(); renderList(r); renderDetail();
+  renderWelcome(); renderMap(r); renderInsight(); renderList(r); renderDetail(); renderTrip();
 }
 
 function renderWelcome() { $('welcome').hidden = !!st.key; }
@@ -373,3 +384,116 @@ function setNow() {
 
   setNow(); render();
 })();
+
+// ---------- Kör hit: rutt, trängselskatt och avresetid ----------
+function tripTarget() {
+  const s = pool().find(x => x.id === st.sel) || (st.dest ? ranked()[0] : null);
+  if (s) return { lngLat: s.mid, label: s.address + (s.id === st.sel ? '' : ' (bästa fickan)') };
+  return st.dest ? { lngLat: st.dest, label: st.destLabel } : null;
+}
+const fmtMin = sec => { const m = Math.round(sec / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
+const hhmm = ms => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+function renderTrip() {
+  const box = $('trip');
+  box.hidden = !st.dest;
+  if (!st.dest) return;
+  const tgt = tripTarget();
+  $('tripTarget').textContent = tgt ? 'till ' + tgt.label : '';
+  const out = $('tripOut');
+  if (!trip.routes.length) { out.innerHTML = trip.msg ? `<p class="muted">${esc(trip.msg)}</p>` : ''; drawRoute(); return; }
+  const r = trip.routes[trip.pick], deps = departures(r, trip.base), cur = deps[trip.dep];
+  const best = deps.reduce((a, b) => b.total < a.total ? b : a, deps[0]);
+  const names = { snabbast: 'Snabbast', alternativ: 'Alternativ', 'utan tull': 'Utan trängselskatt' };
+  const nowCosts = trip.routes.map(x => departures(x, trip.base)[trip.dep].total);
+  let tip = '';
+  if (best.total < cur.total) tip = `<div class="insight">Vänta till <b>${hhmm(best.t)}</b> så kostar det <b>${best.total} kr</b> i stället för ${cur.total} kr. <span class="save">Du sparar ${cur.total - best.total} kr.</span></div>`;
+  else if (cur.total === 0) tip = `<div class="insight">Ingen trängselskatt på den här resan${r.pass.length ? ' vid den tiden' : ''}.</div>`;
+  const free = trip.routes.findIndex(x => x.kind === 'utan tull');
+  if (free >= 0 && free !== trip.pick && cur.total > 0) tip += `<div class="insight">Kör <b>utan trängselskatt</b>: ${fmtMin(trip.routes[free].sec - r.sec)} längre, sparar <span class="save">${cur.total} kr</span>.</div>`;
+  const links = navLinks(trip.from, tgt.lngLat, r);
+  out.innerHTML = `
+    <div class="routes">${trip.routes.map((x, i) => `<button type="button" class="route" data-i="${i}" aria-pressed="${i === trip.pick}">
+      <span class="rname">${names[x.kind] || x.kind} · ${fmtMin(x.sec)}</span>
+      <span class="rsub">${x.km.toFixed(1).replace('.', ',')} km · ${x.pass.length ? x.pass.length + ' betalstation' + (x.pass.length > 1 ? 'er' : '') : 'inga betalstationer'}</span>
+      <span class="rcost">${nowCosts[i]} kr<small>skatt</small></span></button>`).join('')}</div>
+    ${tip}
+    <span class="lbl">Avresa</span>
+    <div class="deps">${deps.map((d, i) => `<button type="button" class="dep${d.total === best.total && best.total < deps[0].total ? ' best' : ''}" data-i="${i}" aria-pressed="${i === trip.dep}">
+      <small>${d.min ? '+' + d.min + ' min' : 'Nu'}</small><b>${hhmm(d.t)}</b><small>${d.total} kr</small></button>`).join('')}</div>
+    <p class="muted">Framme ca <b>${hhmm(cur.arrive)}</b>. Restiden räknas utan köer.</p>
+    ${cur.items.length ? `<ul class="tolls">${cur.items.map(p => `<li>${esc(p.name)} ${hhmm(p.t)}: ${p.amount} kr</li>`).join('')}</ul>${cur.capped ? '<p class="muted">Taket per dag gäller.</p>' : ''}` : ''}
+    <span class="lbl">Navigera</span>
+    <div class="nav">
+      <a class="btn" href="${links.google}" target="_blank" rel="noopener">Google Maps</a>
+      <a class="btn" href="${links.apple}" target="_blank" rel="noopener">Apple Kartor</a>
+      <a class="btn" href="${links.waze}" target="_blank" rel="noopener">Waze</a>
+    </div>
+    ${r.kind === 'utan tull' ? '<p class="muted">Google Maps får mellanpunkter så att den följer vägen utan tull. Apple Kartor och Waze kan välja en annan väg.</p>' : ''}
+    <details class="steps"><summary>Vägbeskrivning (${r.steps.length} steg)</summary><ol>${r.steps.map(x => `<li>${esc(x.text)}</li>`).join('')}</ol></details>`;
+  out.querySelectorAll('.route').forEach(b => b.onclick = () => { trip.pick = +b.dataset.i; applyArrival(); });
+  out.querySelectorAll('.dep').forEach(b => b.onclick = () => { trip.dep = +b.dataset.i; applyArrival(); });
+  drawRoute();
+}
+function drawRoute() {
+  routeLayer.clearLayers();
+  if (!trip.routes.length) return;
+  trip.routes.forEach((r, i) => {
+    if (i === trip.pick) return;
+    L.polyline(r.coords.map(([x, y]) => [y, x]), { color: '#7b8794', weight: 5, opacity: .55, bubblingMouseEvents: false })
+      .on('click', () => { trip.pick = i; applyArrival(); }).addTo(routeLayer);
+  });
+  const r = trip.routes[trip.pick];
+  L.polyline(r.coords.map(([x, y]) => [y, x]), { color: CSS('--accent'), weight: 6, opacity: .9, interactive: false }).addTo(routeLayer);
+  for (const p of r.pass) L.marker([p.pos[1], p.pos[0]], { interactive: false, icon: L.divIcon({ className: '', html: '<div class="gantry">kr</div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(routeLayer);
+}
+// Parkeringen räknas från när du är framme.
+function applyArrival() {
+  const r = trip.routes[trip.pick];
+  if (r) {
+    const arrive = trip.base + (departures(r, trip.base)[trip.dep].min * 60 + r.sec) * 1000;
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const a = new Date(arrive), a0 = new Date(a); a0.setHours(0, 0, 0, 0);
+    st.dayOff = Math.round((a0 - d0) / 86400000);
+    st.slot = Math.min(95, Math.ceil((a.getHours() * 60 + a.getMinutes()) / 15));
+    if (st.dayOff >= 0 && st.dayOff < 7) { $('day').value = st.dayOff; $('time').value = st.slot; }
+  }
+  render();
+}
+async function geocode(q) {
+  const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=se&accept-language=sv&viewbox=17.4,59.7,18.8,58.9&q=' + encodeURIComponent(q);
+  const res = await (await fetch(url)).json();
+  if (!res.length) throw new Error('Hittade inte startadressen.');
+  return { lngLat: [+res[0].lon, +res[0].lat], label: res[0].display_name.split(',').slice(0, 2).join(',') };
+}
+async function plan() {
+  const tgt = tripTarget();
+  if (!tgt || !trip.from) return;
+  if (trip.abort) trip.abort.abort();
+  trip.abort = new AbortController();
+  trip.routes = []; trip.msg = 'Räknar ut rutter…'; renderTrip();
+  try {
+    trip.routes = await planRoutes(trip.from, tgt.lngLat, { signal: trip.abort.signal });
+    trip.pick = 0; trip.dep = 0; trip.base = Date.now(); trip.msg = '';
+    const b = L.latLngBounds(trip.routes[0].coords.map(([x, y]) => [y, x]));
+    map.fitBounds(b, { padding: [30, 30] });
+    applyArrival();
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    trip.routes = []; trip.msg = 'Kunde inte räkna ut en rutt just nu. Försök igen om en stund.';
+    renderTrip();
+  }
+}
+$('fromForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = $('from').value.trim();
+  if (!q && trip.from) return plan();
+  if (!q) { $('from').focus(); return; }
+  try { const g = await geocode(q); trip.from = g.lngLat; trip.fromLabel = g.label; plan(); }
+  catch (err) { trip.msg = err.message; trip.routes = []; renderTrip(); }
+});
+$('fromHere').onclick = () => {
+  if (!navigator.geolocation) { trip.msg = 'Din webbläsare kan inte dela plats. Skriv en startadress.'; return renderTrip(); }
+  navigator.geolocation.getCurrentPosition(p => { trip.from = [p.coords.longitude, p.coords.latitude]; $('from').value = 'Min plats'; plan(); },
+    () => { trip.msg = 'Fick inte tillgång till din plats. Skriv en startadress.'; renderTrip(); }, { enableHighAccuracy: true, timeout: 10000 });
+};

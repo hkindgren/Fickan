@@ -1,7 +1,7 @@
 import {
   buildSegments, generalSegments, attachService, forbudSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
-} from './rules.js?v=202610122307';
+} from './rules.js?v=202610122314';
 
 const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';
@@ -30,9 +30,33 @@ const st = window.fickanState = {
 
 // ---------- karta ----------
 const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([59.334, 18.063], 13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19, attribution: '© OpenStreetMap',
-}).addTo(map);
+// Kartstilar, som "Standard / Satellit / Ljus" i Google Maps. Valet sparas i webbläsaren.
+const OSM_ATTR = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+const BASEMAPS = {
+  standard: L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20, subdomains: 'abcd', attribution: OSM_ATTR + ' © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>' }),
+  satellit: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Bilder © Esri, Maxar, Earthstar Geographics' }),
+  ljus: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, subdomains: 'abcd', attribution: OSM_ATTR + ' © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>' }),
+  osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: OSM_ATTR }),
+};
+const BASENAMES = { standard: 'Standard', satellit: 'Satellit', ljus: 'Ljus', osm: 'OpenStreetMap' };
+let base = store.get('basemap', 'standard');
+if (!BASEMAPS[base]) base = 'standard';
+BASEMAPS[base].addTo(map);
+document.documentElement.dataset.basemap = base;
+const baseCtl = L.control({ position: 'topright' });
+baseCtl.onAdd = () => {
+  const div = L.DomUtil.create('div', 'basepick');
+  div.setAttribute('role', 'group'); div.setAttribute('aria-label', 'Kartstil');
+  div.innerHTML = Object.entries(BASENAMES).map(([k, n]) => `<button type="button" data-k="${k}" aria-pressed="${k === base}">${n}</button>`).join('');
+  L.DomEvent.disableClickPropagation(div);
+  div.querySelectorAll('button').forEach(b => b.onclick = () => {
+    map.removeLayer(BASEMAPS[base]); base = b.dataset.k; BASEMAPS[base].addTo(map); BASEMAPS[base].bringToBack();
+    store.set('basemap', base); document.documentElement.dataset.basemap = base;
+    div.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  });
+  return div;
+};
+baseCtl.addTo(map);
 const segLayer = L.layerGroup().addTo(map);
 const topLayer = L.layerGroup().addTo(map);
 let destMarker = null;

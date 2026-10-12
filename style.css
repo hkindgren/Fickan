@@ -13,7 +13,7 @@
   --accent:#5ea3f2; --accent-ink:#0f151b;
   --free:#3cc488; --paid:#5c9ff0; --cond:#f0b42c; --stop:#f0625b; --load:#a888f5; --hcp:#8592a0;
   color-scheme:dark}
-  .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.6)}
+  :root:not([data-basemap="satellit"]) .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.6)}
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -140,3 +140,7 @@ dialog::backdrop{background:rgba(10,15,20,.45)}
 .warn{border-left:3px solid var(--cond);padding:4px 0 4px 10px;font-size:14px}
 .tag.gen{color:var(--free);border-color:var(--free)}
 .legend i.gen{background:repeating-linear-gradient(90deg,var(--free) 0 6px,transparent 6px 10px)}
+
+.basepick{display:flex;flex-wrap:wrap;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px;box-shadow:0 1px 4px rgba(0,0,0,.15);max-width:170px}
+.basepick button{border:0;background:transparent;border-radius:7px;padding:4px 8px;font-size:12.5px;cursor:pointer;color:var(--muted);flex:1 1 auto}
+.basepick button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}

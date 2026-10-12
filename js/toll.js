@@ -1,7 +1,7 @@
 // Fickan – trängselskatt i Stockholm
 // Betalstationer: OpenStreetMap (highway=toll_gantry, operator Transportstyrelsen), hämtat 2026-10-12.
 // Tider och belopp: Transportstyrelsen, gäller sedan 1 januari 2020.
-import { holidays } from './rules.js?v=202610122330';
+import { holidays } from './rules.js?v=202610122331';
 
 // [lng, lat, namn, stationsnummer]
 export const GANTRIES = [

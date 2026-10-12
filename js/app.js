@@ -1,9 +1,9 @@
 import {
   buildSegments, generalSegments, attachService, forbudSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
-} from './rules.js?v=202610122330';
-import { planRoutes, departures, navLinks } from './route.js?v=202610122330';
-import { GANTRIES } from './toll.js?v=202610122330';
+} from './rules.js?v=202610122331';
+import { planRoutes, departures, navLinks } from './route.js?v=202610122331';
+import { GANTRIES } from './toll.js?v=202610122331';
 
 const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';
@@ -399,7 +399,7 @@ function renderTrip() {
   box.hidden = !st.dest;
   if (!st.dest) return;
   const tgt = tripTarget();
-  $('tripTarget').textContent = tgt ? 'till ' + tgt.label : '';
+  $('tripTarget').textContent = tgt ? (trip.fromLabel ? `från ${trip.fromLabel} ` : '') + 'till ' + tgt.label : '';
   const out = $('tripOut');
   if (!trip.routes.length) { out.innerHTML = trip.msg ? `<p class="muted">${esc(trip.msg)}</p>` : ''; drawRoute(); return; }
   const r = trip.routes[trip.pick], deps = departures(r, trip.base), cur = deps[trip.dep];
@@ -461,13 +461,18 @@ function applyArrival() {
   render();
 }
 async function geocode(q) {
-  // Stockholms län först, sedan hela Sverige
-  const base = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=se&accept-language=sv&q=';
-  for (const extra of ['&viewbox=17.2,60.2,19.4,58.7&bounded=1', '']) {
-    const res = await (await fetch(base + encodeURIComponent(q) + extra)).json();
-    if (res.length) return { lngLat: [+res[0].lon, +res[0].lat], label: res[0].display_name.split(',').slice(0, 2).join(',') };
+  // Sök i Stockholms län först (även utan ord som "centrum"), annars i Sverige men bara nära målet.
+  const base = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=se&accept-language=sv&q=';
+  const short = q.replace(/\b(centrum|c)\b\.?/gi, '').trim();
+  const tries = [[q, true], [short, true], [q + ', Stockholm', false], [q, false]];
+  const near = st.dest || [18.06, 59.33];
+  for (const [text, bounded] of tries) {
+    if (!text) continue;
+    const res = await (await fetch(base + encodeURIComponent(text) + (bounded ? '&viewbox=17.2,60.2,19.4,58.7&bounded=1' : ''))).json();
+    const hit = res.find(r => distToLines([+r.lon, +r.lat], [[near, near]]) < 150000);
+    if (hit) return { lngLat: [+hit.lon, +hit.lat], label: hit.display_name.split(',').slice(0, 3).join(',') };
   }
-  throw new Error('Hittade inte startadressen.');
+  throw new Error('Hittade ingen sådan startadress i närheten. Prova med gatuadress.');
 }
 function departBase() {
   const v = $('depart').value;
@@ -503,6 +508,6 @@ $('fromForm').addEventListener('submit', async e => {
 $('depart').addEventListener('change', () => { if (trip.routes.length) { trip.base = departBase(); trip.dep = 0; applyArrival(); } });
 $('fromHere').onclick = () => {
   if (!navigator.geolocation) { trip.msg = 'Din webbläsare kan inte dela plats. Skriv en startadress.'; return renderTrip(); }
-  navigator.geolocation.getCurrentPosition(p => { trip.from = [p.coords.longitude, p.coords.latitude]; $('from').value = 'Min plats'; plan(); },
+  navigator.geolocation.getCurrentPosition(p => { trip.from = [p.coords.longitude, p.coords.latitude]; $('from').value = 'Min plats'; trip.fromLabel = 'min plats'; plan(); },
     () => { trip.msg = 'Fick inte tillgång till din plats. Skriv en startadress.'; renderTrip(); }, { enableHighAccuracy: true, timeout: 10000 });
 };

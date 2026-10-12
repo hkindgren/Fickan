@@ -1,5 +1,5 @@
 // Fickan – ruttplanering med Valhalla (FOSSGIS, öppen ruttmotor baserad på OpenStreetMap)
-import { GANTRIES, passages, tollFor } from './toll.js?v=202610122330';
+import { GANTRIES, passages, tollFor } from './toll.js?v=202610122331';
 
 const VALHALLA = 'https://valhalla1.openstreetmap.de/route';
 

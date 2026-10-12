@@ -130,7 +130,7 @@ test('avstånd till linje i meter', () => {
   assert.ok(d > 10 && d < 12, String(d));
 });
 
-import { generalSegments, attachService, serviceFromServicedagar } from '../js/rules.js';
+import { generalSegments, attachService, serviceFromServicedagar, forbudSegments, offsetLine } from '../js/rules.js';
 
 test('servicetid som bara gäller vintertid', () => {
   const r = parseService('Servicetid måndag 08:00–16:00 1 november–15 maj');
@@ -154,7 +154,7 @@ test('gator utan föreskrifter får allmänna regler och korsningar hålls fria'
     { type: 'way', id: 3, tags: { highway: 'residential', name: 'Friherregatan' }, nodes: [5, 6], geometry: [{ lat: lat - 0.001, lon: lng }, { lat: lat - 0.001, lon: lng + d }] },
     { type: 'way', id: 4, tags: { highway: 'residential', name: 'Privatvägen', access: 'private' }, nodes: [7, 8], geometry: [{ lat: lat + 0.002, lon: lng }, { lat: lat + 0.002, lon: lng + d }] },
   ] };
-  const { car } = buildSegments({ features: [F(30, line(lng, lat - 0.001, 0.0005), { STREET_NAME: 'Friherregatan', VF_PLATS_TYP: 'Avgiftsfri parkering', PARKING_RATE: 'avgiftsfri' })] });
+  const { car } = buildSegments({ features: [F(30, line(lng, lat - 0.001, 0.0005), { STREET_NAME: 'Friherregatan', VF_PLATS_TYP: 'P Avgift, boende', PARKING_RATE: 'taxa 5: 5 kr/tim vardagar 7-19' })] });
   const gen = generalSegments(osm, car);
   const names = new Set(gen.map(s => s.street));
   assert.ok(names.has('Ormängsgatan') && names.has('Tvärgatan'));
@@ -174,4 +174,26 @@ test('servicetid med å/ä/ö i veckodagen', () => {
   assert.equal(parseService('Servicetid måndag 09:00–14:00').wd, 1);
   assert.equal(parseService('Servicetid lördag 09:00–14:00').wd, 6);
   assert.equal(parseService('Servicetid söndag 00:00–06:00').wd, 0);
+});
+
+test('förbud på ena sidan: den sidan försvinner, andra sidan blir allmänna regler', () => {
+  const lat = 59.2718, lng = 18.0271, d = 0.003;
+  const center = [[lng, lat], [lng + d, lat]];
+  const osm = { elements: [{ type: 'way', id: 9, tags: { highway: 'residential', name: 'Vansövägen' }, nodes: [1, 2], geometry: center.map(([x, y]) => ({ lat: y, lon: x })) }] };
+  const north = offsetLine(center, 4);   // vänster om linjen i färdriktningen österut = norra sidan
+  assert.ok(north[0][1] > lat);
+  const fb = forbudSegments({ features: [
+    { id: 'f1', geometry: { type: 'LineString', coordinates: north }, properties: { STREET_NAME: 'Vansövägen', VEHICLE: 'fordon', CITATION: '0180 2009-1' } },
+    { id: 'f2', geometry: { type: 'LineString', coordinates: offsetLine(center, -4) }, properties: { STREET_NAME: 'Vansövägen', VEHICLE: 'fordon', VF_PLATS_TYP: 'Tidsreglerat parkerings-/stoppförbud', START_WEEKDAY: 'onsdag', START_TIME: 800, END_TIME: 1600, START_MONTH: 11, START_DAY: 1, END_MONTH: 5, END_DAY: 15 } },
+  ] });
+  assert.equal(fb.find(s => s.id === 'forbud.f1').cls, 'forbud');
+  assert.equal(evaluate(fb.find(s => s.id === 'forbud.f1'), at(2026, 10, 12, 12), 60).status, 'stop');
+  const timed = fb.find(s => s.id === 'forbud.f2');
+  assert.equal(timed.cls, 'general');
+  assert.equal(evaluate(timed, at(2026, 11, 18, 9), 60).status, 'stop');    // onsdag i november
+  assert.equal(evaluate(timed, at(2026, 10, 14, 9), 60).status, 'free');    // onsdag i oktober
+  const gen = generalSegments(osm, [], fb);
+  assert.equal(gen.length, 0, 'båda sidorna täcks av stadens förbud/tidsförbud');
+  const gen2 = generalSegments(osm, [], fb.filter(s => s.id === 'forbud.f1'));
+  assert.ok(gen2.length > 0 && gen2.every(s => s.side === 'höger'), 'bara södra sidan blir kvar');
 });

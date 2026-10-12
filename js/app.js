@@ -1,7 +1,7 @@
 import {
-  buildSegments, generalSegments, attachService, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
+  buildSegments, generalSegments, attachService, forbudSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
-} from './rules.js?v=202610122242';
+} from './rules.js?v=202610122307';
 
 const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';
@@ -70,34 +70,41 @@ async function fetchOSM(lngLat) {
   if (!r.ok) throw new Error('osm ' + r.status);
   return r.json();
 }
-async function fetchService(streets) {
-  const out = { features: [] };
-  const list = [...streets].slice(0, 40);
-  for (let i = 0; i < list.length; i += 6) {
-    const batch = await Promise.all(list.slice(i, i + 6).map(n =>
-      getJSON(`${API}servicedagar/street/${encodeURIComponent(n)}?outputFormat=json&apiKey=${encodeURIComponent(st.key)}`).catch(() => null)));
-    batch.forEach(b => b && Array.isArray(b.features) && out.features.push(...b.features));
-  }
-  return out;
+// Stadens kartdatabas (OGC API Features) har lager som parkerings-API:et saknar, t.ex. förbud per gatusida.
+const OGC = () => `https://openstreetgs.stockholm.se/geoservice/api/${encodeURIComponent(st.key)}/ogc/features/v1/collections`;
+function bboxAround([lng, lat], m) {
+  const dLat = m / 111320, dLng = m / (111320 * Math.cos(lat * Math.PI / 180));
+  return [lng - dLng, lat - dLat, lng + dLng, lat + dLat].map(v => v.toFixed(6)).join(',');
+}
+async function fetchLayer(name, lngLat) {
+  const r = await fetch(`${OGC()}/${name}/items?f=json&limit=3000&bbox=${bboxAround(lngLat, RADIUS + 100)}`);
+  if (!r.ok) throw new Error(name + ' ' + r.status);
+  return r.json();
 }
 async function fetchRules(lngLat) {
   const k = lngLat.map(v => v.toFixed(4)).join(',');
   if (cache.has(k)) return cache.get(k);
   const q = `within?radius=${RADIUS}&lat=${lngLat[1]}&lng=${lngLat[0]}&outputFormat=json&apiKey=${encodeURIComponent(st.key)}`;
   // Servicetider och platser för rörelsehindrade finns redan i ptillaten.
-  const [p, osm] = await Promise.all([getJSON(API + 'ptillaten/' + q), fetchOSM(lngLat).catch(() => null)]);
+  const [p, osm, forbud, service] = await Promise.all([
+    getJSON(API + 'ptillaten/' + q),
+    fetchOSM(lngLat).catch(() => null),
+    fetchLayer('LTFR_P_FORBUD', lngLat).catch(() => null),
+    fetchLayer('LTFR_SERVICEDAG', lngLat).catch(() => null),
+  ]);
   if (!p || !Array.isArray(p.features)) throw new Error('badkey');
   const out = buildSegments(p);
+  const fb = forbudSegments(forbud);
+  out.forbud = fb.filter(s => s.cls === 'forbud');
+  const timed = fb.filter(s => s.cls === 'general');
   out.general = [];
   if (osm) {
-    const all = [...out.car, ...out.hcp];
-    const gen = generalSegments(osm, all).filter(s => distToLines(lngLat, s.lines) <= RADIUS + 50);
-    if (gen.length) {
-      showStatus('Hämtar servicedagar…');
-      attachService(gen, await fetchService(new Set(gen.map(s => s.street))));
-    }
+    const gen = generalSegments(osm, [...out.car, ...out.hcp], fb).filter(s => distToLines(lngLat, s.lines) <= RADIUS + 50);
+    if (service) attachService(gen, service);
     out.general = gen;
   }
+  out.general.push(...timed);
+  out.partial = { osm: !!osm, forbud: !!forbud, service: !!service };
   cache.set(k, out);
   return out;
 }
@@ -118,7 +125,7 @@ async function setDest(lngLat, label, sub) {
   showStatus('Hämtar parkeringsregler…');
   try {
     const d = await fetchRules(lngLat);
-    st.segs = [...d.car, ...d.general];
+    st.segs = [...d.car, ...d.general, ...d.forbud];
     st.hcpSegs = d.hcp;
     st.segs.forEach(s => s.pdistrict && st.districts.add(s.pdistrict));
     store.set('districts', [...st.districts].sort());

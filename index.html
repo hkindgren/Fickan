@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-<link rel="stylesheet" href="style.css?v=202610122328">
+<link rel="stylesheet" href="style.css?v=202610122330">
 </head>
 <body>
 <header class="topbar">
@@ -82,6 +82,7 @@
         <button class="btn" type="button" id="fromHere" title="Använd min plats">Min plats</button>
         <button class="btn primary" type="submit">Planera</button>
       </form>
+      <label class="row nowrap"><span class="lbl">Avresa</span><input id="depart" type="datetime-local" aria-label="Avresetid"><span class="muted">tomt = nu</span></label>
       <div id="tripOut" aria-live="polite"></div>
     </section>
 
@@ -128,6 +129,6 @@
 </dialog>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script type="module" src="js/app.js?v=202610122328"></script>
+<script type="module" src="js/app.js?v=202610122330"></script>
 </body>
 </html>

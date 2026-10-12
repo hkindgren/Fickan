@@ -1,9 +1,9 @@
 import {
   buildSegments, generalSegments, attachService, forbudSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
-} from './rules.js?v=202610122328';
-import { planRoutes, departures, navLinks } from './route.js?v=202610122328';
-import { GANTRIES } from './toll.js?v=202610122328';
+} from './rules.js?v=202610122330';
+import { planRoutes, departures, navLinks } from './route.js?v=202610122330';
+import { GANTRIES } from './toll.js?v=202610122330';
 
 const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';
@@ -420,7 +420,7 @@ function renderTrip() {
     ${tip}
     <span class="lbl">Avresa</span>
     <div class="deps">${deps.map((d, i) => `<button type="button" class="dep${d.total === best.total && best.total < deps[0].total ? ' best' : ''}" data-i="${i}" aria-pressed="${i === trip.dep}">
-      <small>${d.min ? '+' + d.min + ' min' : 'Nu'}</small><b>${hhmm(d.t)}</b><small>${d.total} kr</small></button>`).join('')}</div>
+      <small>${d.min ? '+' + d.min + ' min' : ($('depart').value ? 'Vald tid' : 'Nu')}</small><b>${hhmm(d.t)}</b><small>${d.total} kr</small></button>`).join('')}</div>
     <p class="muted">Framme ca <b>${hhmm(cur.arrive)}</b>. Restiden räknas utan köer.</p>
     ${cur.items.length ? `<ul class="tolls">${cur.items.map(p => `<li>${esc(p.name)} ${hhmm(p.t)}: ${p.amount} kr</li>`).join('')}</ul>${cur.capped ? '<p class="muted">Taket per dag gäller.</p>' : ''}` : ''}
     <span class="lbl">Navigera</span>
@@ -461,10 +461,18 @@ function applyArrival() {
   render();
 }
 async function geocode(q) {
-  const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=se&accept-language=sv&viewbox=17.4,59.7,18.8,58.9&q=' + encodeURIComponent(q);
-  const res = await (await fetch(url)).json();
-  if (!res.length) throw new Error('Hittade inte startadressen.');
-  return { lngLat: [+res[0].lon, +res[0].lat], label: res[0].display_name.split(',').slice(0, 2).join(',') };
+  // Stockholms län först, sedan hela Sverige
+  const base = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=se&accept-language=sv&q=';
+  for (const extra of ['&viewbox=17.2,60.2,19.4,58.7&bounded=1', '']) {
+    const res = await (await fetch(base + encodeURIComponent(q) + extra)).json();
+    if (res.length) return { lngLat: [+res[0].lon, +res[0].lat], label: res[0].display_name.split(',').slice(0, 2).join(',') };
+  }
+  throw new Error('Hittade inte startadressen.');
+}
+function departBase() {
+  const v = $('depart').value;
+  const t = v ? new Date(v).getTime() : NaN;
+  return Number.isFinite(t) && t > Date.now() - 60000 ? t : Date.now();
 }
 async function plan() {
   const tgt = tripTarget();
@@ -474,7 +482,7 @@ async function plan() {
   trip.routes = []; trip.msg = 'Räknar ut rutter…'; renderTrip();
   try {
     trip.routes = await planRoutes(trip.from, tgt.lngLat, { signal: trip.abort.signal });
-    trip.pick = 0; trip.dep = 0; trip.base = Date.now(); trip.msg = '';
+    trip.pick = 0; trip.dep = 0; trip.base = departBase(); trip.msg = '';
     const b = L.latLngBounds(trip.routes[0].coords.map(([x, y]) => [y, x]));
     map.fitBounds(b, { padding: [30, 30] });
     applyArrival();
@@ -492,6 +500,7 @@ $('fromForm').addEventListener('submit', async e => {
   try { const g = await geocode(q); trip.from = g.lngLat; trip.fromLabel = g.label; plan(); }
   catch (err) { trip.msg = err.message; trip.routes = []; renderTrip(); }
 });
+$('depart').addEventListener('change', () => { if (trip.routes.length) { trip.base = departBase(); trip.dep = 0; applyArrival(); } });
 $('fromHere').onclick = () => {
   if (!navigator.geolocation) { trip.msg = 'Din webbläsare kan inte dela plats. Skriv en startadress.'; return renderTrip(); }
   navigator.geolocation.getCurrentPosition(p => { trip.from = [p.coords.longitude, p.coords.latitude]; $('from').value = 'Min plats'; plan(); },

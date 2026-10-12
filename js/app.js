@@ -1,7 +1,7 @@
 import {
-  buildSegments, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
+  buildSegments, generalSegments, attachService, evaluate, chance, verdict, shortStatus, ruleFacts, signPlates,
   distToLines, durText, WD_SHORT,
-} from './rules.js?v=202610122220';
+} from './rules.js?v=202610122242';
 
 const L = window.L;
 const API = 'https://openparking.stockholm.se/LTF-Tolken/v1/';
@@ -61,14 +61,43 @@ async function getJSON(url) {
   return r.json();
 }
 const cache = new Map();
+// Gatunät från OpenStreetMap (Overpass) för gator där staden saknar föreskrifter.
+const OVERPASS = 'https://overpass-api.de/api/interpreter';
+async function fetchOSM(lngLat) {
+  const [lng, lat] = lngLat;
+  const q = `[out:json][timeout:20];(way(around:${RADIUS + 100},${lat},${lng})[highway~"^(residential|unclassified|living_street|tertiary|secondary|primary|service)$"];node(around:${RADIUS + 100},${lat},${lng})[highway=crossing];);out geom;`;
+  const r = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+  if (!r.ok) throw new Error('osm ' + r.status);
+  return r.json();
+}
+async function fetchService(streets) {
+  const out = { features: [] };
+  const list = [...streets].slice(0, 40);
+  for (let i = 0; i < list.length; i += 6) {
+    const batch = await Promise.all(list.slice(i, i + 6).map(n =>
+      getJSON(`${API}servicedagar/street/${encodeURIComponent(n)}?outputFormat=json&apiKey=${encodeURIComponent(st.key)}`).catch(() => null)));
+    batch.forEach(b => b && Array.isArray(b.features) && out.features.push(...b.features));
+  }
+  return out;
+}
 async function fetchRules(lngLat) {
   const k = lngLat.map(v => v.toFixed(4)).join(',');
   if (cache.has(k)) return cache.get(k);
   const q = `within?radius=${RADIUS}&lat=${lngLat[1]}&lng=${lngLat[0]}&outputFormat=json&apiKey=${encodeURIComponent(st.key)}`;
-  // Servicetider och platser för rörelsehindrade finns redan i ptillaten, så ett anrop räcker.
-  const p = await getJSON(API + 'ptillaten/' + q);
+  // Servicetider och platser för rörelsehindrade finns redan i ptillaten.
+  const [p, osm] = await Promise.all([getJSON(API + 'ptillaten/' + q), fetchOSM(lngLat).catch(() => null)]);
   if (!p || !Array.isArray(p.features)) throw new Error('badkey');
   const out = buildSegments(p);
+  out.general = [];
+  if (osm) {
+    const all = [...out.car, ...out.hcp];
+    const gen = generalSegments(osm, all).filter(s => distToLines(lngLat, s.lines) <= RADIUS + 50);
+    if (gen.length) {
+      showStatus('Hämtar servicedagar…');
+      attachService(gen, await fetchService(new Set(gen.map(s => s.street))));
+    }
+    out.general = gen;
+  }
   cache.set(k, out);
   return out;
 }
@@ -89,7 +118,7 @@ async function setDest(lngLat, label, sub) {
   showStatus('Hämtar parkeringsregler…');
   try {
     const d = await fetchRules(lngLat);
-    st.segs = d.car;
+    st.segs = [...d.car, ...d.general];
     st.hcpSegs = d.hcp;
     st.segs.forEach(s => s.pdistrict && st.districts.add(s.pdistrict));
     store.set('districts', [...st.districts].sort());
@@ -148,7 +177,7 @@ const okFor = ev => ev.status !== 'stop';
 function ranked() {
   const list = pool().filter(s => okFor(st.results.get(s.id).ev) && walk(s) <= RADIUS);
   const score = s => {
-    const { ev, ch } = st.results.get(s.id), pen = (ev.status === 'cond' ? 40 : 0) + (s.cls === 'load' ? 60 : 0);
+    const { ev, ch } = st.results.get(s.id), pen = (ev.status === 'cond' ? 40 : 0) + (s.cls === 'load' ? 60 : 0) + (s.cls === 'general' ? 15 : 0);
     if (st.sort === 'near') return walk(s) + pen;
     if (st.sort === 'cheap') return ev.cost * 1000 + walk(s) + pen * 10;
     if (st.sort === 'chance') return -ch.score * 1000 + walk(s) / 10 + pen;
@@ -177,7 +206,7 @@ function renderMap(r) {
     const { ev } = st.results.get(s.id), sel = s.id === st.sel;
     const ll = s.lines.map(line => line.map(([x, y]) => [y, x]));
     if (sel) L.polyline(ll, { color: CSS('--ink'), weight: 12, opacity: .9, interactive: false }).addTo(segLayer);
-    L.polyline(ll, { color: CSS('--' + look(ev)), weight: 6, opacity: .95, lineCap: 'round', bubblingMouseEvents: false })
+    L.polyline(ll, { color: CSS('--' + look(ev)), weight: s.cls === 'general' ? 5 : 6, opacity: s.cls === 'general' ? .8 : .95, dashArray: s.cls === 'general' ? '8 6' : null, lineCap: 'round', bubblingMouseEvents: false })
       .on('click', () => select(s.id))
       .bindTooltip(`${s.address}: ${shortStatus(ev)}`, { sticky: true })
       .addTo(segLayer);
@@ -214,7 +243,7 @@ function renderList(r) {
     const { ev, ch } = st.results.get(s.id);
     return `<li><button class="item" type="button" data-id="${esc(s.id)}" aria-current="${st.sel === s.id}">
       <span class="rank" style="background:${COL[look(ev)]}">${i + 1}</span>
-      <span style="min-width:0"><div class="name">${esc(s.address)}${s.cls === 'load' ? ' <small class="tag">lastplats</small>' : ''}</div><div class="sub">${esc(shortStatus(ev))} · ${walk(s)} m · chans ${ch.label.toLowerCase()}</div></span>
+      <span style="min-width:0"><div class="name">${esc(s.address)}${s.cls === 'load' ? ' <small class="tag">lastplats</small>' : s.cls === 'general' ? ' <small class="tag gen">allmänna regler</small>' : ''}</div><div class="sub">${esc(shortStatus(ev))} · ${walk(s)} m · chans ${ch.label.toLowerCase()}</div></span>
       <span class="price">${ev.cost} kr<small>${ev.status === 'cond' ? 'till flytt' : durText(st.dur)}</small></span>
     </button></li>`;
   }).join('') || (st.key && st.segs.length ? '<li class="empty">Inga tillåtna platser inom 500 m vid den tiden.</li>' : '');
@@ -242,6 +271,7 @@ function renderDetail() {
       <button class="close" type="button" id="closeDetail" aria-label="Stäng">×</button></div>
     <div class="row nowrap"><span class="pill ${PILL[look(ev)][0]}">${PILL[look(ev)][1]}</span><span class="chance">Chans att hitta plats: ${ch.label} (uppskattning)</span></div>
     <div class="verdict">${esc(verdict(ev, st.dur))}</div>
+    ${s.cls === 'general' ? '<div class="warn">Staden har inga föreskrifter här, så tolkningen bygger på de allmänna reglerna. Kontrollera alltid skyltarna.</div>' : ''}
     ${s.cls === 'load' ? '<div class="warn">Lastplats. Stadens data kan sakna vissa tider, så kontrollera skylten innan du parkerar.</div>' : ''}
     <span class="lbl">Så borde skyltarna se ut</span>
     <div class="signs">${signPlates(s).map(g => `<figure class="sign">${g.sign === 'P' ? SVG_P : SVG_NOP}${g.plates.map(plateHTML).join('')}</figure>`).join('')}</div>

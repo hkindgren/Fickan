@@ -129,3 +129,49 @@ test('avstånd till linje i meter', () => {
   const d = distToLines([18.0504, 59.3401], [[[18.05, 59.34], [18.0508, 59.34]]]);
   assert.ok(d > 10 && d < 12, String(d));
 });
+
+import { generalSegments, attachService, serviceFromServicedagar } from '../js/rules.js';
+
+test('servicetid som bara gäller vintertid', () => {
+  const r = parseService('Servicetid måndag 08:00–16:00 1 november–15 maj');
+  assert.deepEqual(r.only, { m1: 11, d1: 1, m2: 5, d2: 15 });
+  const { car } = buildSegments({ features: [F(20, gA, { STREET_NAME: 'Bävervägen', VF_PLATS_TYP: 'P Avgift, boende', PARKING_RATE: 'taxa 5: 5 kr/tim vardagar 7-19', OTHER_INFO: 'Servicetid måndag 08:00–16:00 1 november–15 maj' })] });
+  assert.equal(evaluate(car[0], at(2026, 10, 12, 10), 60).status, 'paid');  // oktober: ingen servicetid
+  assert.equal(evaluate(car[0], at(2026, 11, 16, 10), 60).status, 'stop');  // november: servicetid
+});
+
+test('servicedagar-tjänstens format', () => {
+  const r = serviceFromServicedagar({ START_WEEKDAY: 'måndag', START_TIME: 800, END_TIME: 1000, START_MONTH: 11, START_DAY: 1, END_MONTH: 5, END_DAY: 15 });
+  assert.deepEqual(r, { k: 'servicedag', wd: 1, from: 8, to: 10, only: { m1: 11, d1: 1, m2: 5, d2: 15 } });
+});
+
+test('gator utan föreskrifter får allmänna regler och korsningar hålls fria', () => {
+  // Ormängsgatan (300 m öst–väst) korsas av Tvärgatan i mitten. Friherregatan har en föreskrift i stadens data.
+  const lat = 59.364, lng = 17.84, d = 0.0026;
+  const osm = { elements: [
+    { type: 'way', id: 1, tags: { highway: 'residential', name: 'Ormängsgatan' }, nodes: [1, 2, 3], geometry: [{ lat, lon: lng }, { lat, lon: lng + d }, { lat, lon: lng + 2 * d }] },
+    { type: 'way', id: 2, tags: { highway: 'residential', name: 'Tvärgatan' }, nodes: [4, 2], geometry: [{ lat: lat + 0.001, lon: lng + d }, { lat, lon: lng + d }] },
+    { type: 'way', id: 3, tags: { highway: 'residential', name: 'Friherregatan' }, nodes: [5, 6], geometry: [{ lat: lat - 0.001, lon: lng }, { lat: lat - 0.001, lon: lng + d }] },
+    { type: 'way', id: 4, tags: { highway: 'residential', name: 'Privatvägen', access: 'private' }, nodes: [7, 8], geometry: [{ lat: lat + 0.002, lon: lng }, { lat: lat + 0.002, lon: lng + d }] },
+  ] };
+  const { car } = buildSegments({ features: [F(30, line(lng, lat - 0.001, 0.0005), { STREET_NAME: 'Friherregatan', VF_PLATS_TYP: 'Avgiftsfri parkering', PARKING_RATE: 'avgiftsfri' })] });
+  const gen = generalSegments(osm, car);
+  const names = new Set(gen.map(s => s.street));
+  assert.ok(names.has('Ormängsgatan') && names.has('Tvärgatan'));
+  assert.ok(!names.has('Friherregatan') && !names.has('Privatvägen'));
+  const junction = [lng + d, lat];
+  assert.ok(gen.every(s => distToLines(junction, s.lines) >= 7), 'inget inom ~10 m från korsningen');
+  attachService(gen, { features: [{ geometry: { type: 'LineString', coordinates: [[lng, lat], [lng + d, lat]] }, properties: { STREET_NAME: 'Ormängsgatan', START_WEEKDAY: 'måndag', START_TIME: 800, END_TIME: 1000, START_MONTH: 11, START_DAY: 1, END_MONTH: 5, END_DAY: 15 } }] });
+  const s = gen.find(x => x.street === 'Ormängsgatan' && x.rules.some(r => r.k === 'servicedag'));
+  assert.ok(s);
+  assert.equal(evaluate(s, at(2026, 10, 12, 9), 120).status, 'free');                 // oktober: gratis
+  assert.equal(evaluate(s, at(2026, 11, 16, 9), 60).status, 'stop');                  // november måndag 9: servicedag
+  assert.equal(evaluate(s, at(2026, 10, 13, 9), 25 * 60).status, 'cond');            // mer än 24 h på vardagar
+  assert.ok(ruleFacts(s).some(f => /allmänna reglerna/.test(f)));
+});
+
+test('servicetid med å/ä/ö i veckodagen', () => {
+  assert.equal(parseService('Servicetid måndag 09:00–14:00').wd, 1);
+  assert.equal(parseService('Servicetid lördag 09:00–14:00').wd, 6);
+  assert.equal(parseService('Servicetid söndag 00:00–06:00').wd, 0);
+});

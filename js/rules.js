@@ -116,7 +116,7 @@ export function parseDayType(v) {
 const MONTHS = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
 // "Servicetid tisdag 09:00 - 14:00 utom under tiden 15 juni - 15 augusti"
 export function parseService(info, p = {}) {
-  const m = String(info || '').toLowerCase().match(/servicetid\s+(\w+)\s+(\d{1,2})[.:](\d\d)\s*[-–]\s*(\d{1,2})[.:](\d\d)(.*)$/);
+  const m = String(info || '').toLowerCase().match(/servicetid\s+([a-zåäö]+)\s+(\d{1,2})[.:](\d\d)\s*[-–]\s*(\d{1,2})[.:](\d\d)(.*)$/);
   let r = null;
   if (m) r = { k: 'servicedag', wd: weekdayIndex(m[1]), from: +m[2] + +m[3] / 60, to: +m[4] + +m[5] / 60 };
   else if (p.START_WEEKDAY != null && p.START_TIME != null && p.END_TIME != null) {
@@ -124,9 +124,22 @@ export function parseService(info, p = {}) {
     r = { k: 'servicedag', wd: weekdayIndex(p.START_WEEKDAY), from: parseHM(p.END_TIME), to: parseHM(p.START_TIME) };
   }
   if (!r || r.wd === null) return null;
-  const ex = m && m[6].match(/utom.*?(\d{1,2})\s+([a-zåäö]+)\s*[-–]\s*(\d{1,2})\s+([a-zåäö]+)/);
-  if (ex && MONTHS.includes(ex[2]) && MONTHS.includes(ex[4])) r.except = { m1: MONTHS.indexOf(ex[2]) + 1, d1: +ex[1], m2: MONTHS.indexOf(ex[4]) + 1, d2: +ex[3] };
-  else if (p.START_MONTH && p.END_MONTH && /utom/i.test(info || '')) r.except = { m1: p.START_MONTH, d1: p.START_DAY || 1, m2: p.END_MONTH, d2: p.END_DAY || 31 };
+  const rest = m ? m[6] : '';
+  const per = rest.match(/(\d{1,2})\s+([a-zåäö]+)\s*[-–]\s*(\d{1,2})\s+([a-zåäö]+)/);
+  const fromText = per && MONTHS.includes(per[2]) && MONTHS.includes(per[4])
+    ? { m1: MONTHS.indexOf(per[2]) + 1, d1: +per[1], m2: MONTHS.indexOf(per[4]) + 1, d2: +per[3] } : null;
+  const fromFields = p.START_MONTH && p.END_MONTH ? { m1: +p.START_MONTH, d1: +p.START_DAY || 1, m2: +p.END_MONTH, d2: +p.END_DAY || 31 } : null;
+  const season = fromText || fromFields;
+  // "utom under tiden 15 juni - 15 augusti" = undantag, "1 november–15 maj" = gäller bara då
+  if (season) { if (/utom/i.test(info || '')) r.except = season; else r.only = season; }
+  return r;
+}
+// Servicedagar-tjänsten: START_TIME–END_TIME är själva förbudstiden, START/END_MONTH perioden då den gäller.
+export function serviceFromServicedagar(p) {
+  const wd = weekdayIndex(p.START_WEEKDAY);
+  if (wd === null || p.START_TIME == null || p.END_TIME == null) return null;
+  const r = { k: 'servicedag', wd, from: parseHM(p.START_TIME), to: parseHM(p.END_TIME) };
+  if (p.START_MONTH && p.END_MONTH) r.only = { m1: +p.START_MONTH, d1: +p.START_DAY || 1, m2: +p.END_MONTH, d2: +p.END_DAY || 31 };
   return r;
 }
 
@@ -264,7 +277,7 @@ function badAt(seg, t, used) {
   const h = hod(t);
   for (let i = 0; i < seg.rules.length; i++) {
     const r = seg.rules[i];
-    if (r.k === 'servicedag' && t.getDay() === r.wd && inWin(h, r.from, r.to) && !(r.except && inPeriod(r.except, t))) return { why: 'servicedag', r };
+    if (r.k === 'servicedag' && t.getDay() === r.wd && inWin(h, r.from, r.to) && !(r.except && inPeriod(r.except, t)) && !(r.only && !inPeriod(r.only, t))) return { why: 'servicedag', r };
     if (r.k === 'lastzon' && winActive(r.win, t)) return { why: 'lastzon', r };
     if (r.k === 'maxtid' && used && winActive(r.win, t)) { used[i] = (used[i] || 0) + STEP; if (used[i] > r.h * 60) return { why: 'maxtid', r }; }
   }
@@ -336,10 +349,12 @@ const daysText = d => !d || d.length === 3 ? 'alla dagar' : d.map(x => DAYWORD[x
 const winText = w => w ? `${daysText(w.days)} ${hh(w.from)}–${hh(w.to)}` : 'hela dygnet';
 const MON = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
 const exceptText = e => e ? ` Gäller inte ${e.d1} ${MON[e.m1 - 1]}–${e.d2} ${MON[e.m2 - 1]}.` : '';
+const onlyText = e => e ? ` Gäller bara ${e.d1} ${MON[e.m1 - 1]}–${e.d2} ${MON[e.m2 - 1]}.` : '';
 const sdText = r => `${WD_LONG[r.wd]}ar ${hhmm(r.from)}–${hhmm(r.to)}`;
 export function ruleFacts(seg) {
   const out = [];
   if (seg.cls === 'hcp') out.push('Reserverad för rörelsehindrade med parkeringstillstånd.');
+  if (seg.cls === 'general') out.push('Staden har inga parkeringsföreskrifter för den här gatan, så de allmänna reglerna gäller: gratis, högst 24 timmar i följd på vardagar. Inte närmare än 10 m från korsning eller övergångsställe och inte framför in- och utfarter.');
   for (const r of seg.rules) {
     if (r.k === 'avgift') {
       const groups = {};
@@ -349,10 +364,11 @@ export function ruleFacts(seg) {
       if (r.boende) out.push(`Boendeparkering gäller${seg.pdistrict ? ` (${seg.pdistrict})` : ''}.`);
     }
     if (r.k === 'lastzon') out.push(`Lastplats ${winText(r.win)}. Då får du bara lasta och lossa. Övrig tid får du parkera.`);
+    if (r.k === 'maxtid' && seg.cls === 'general') continue;
     if (r.k === 'maxtid') out.push(`Längst ${r.h} ${r.h === 1 ? 'timme' : 'timmar'} i följd${r.win ? ' ' + winText(r.win) : ''}.`);
-    if (r.k === 'servicedag') out.push(`Förbud att parkera ${sdText(r)} (servicetid).${exceptText(r.except)}`);
+    if (r.k === 'servicedag') out.push(`Förbud att parkera ${sdText(r)} (servicetid).${exceptText(r.except)}${onlyText(r.only)}`);
   }
-  if (!seg.rules.some(r => r.k === 'avgift')) out.unshift(seg.rate && seg.rate.free ? 'Avgiftsfri.' : 'Ingen avgift.');
+  if (!seg.rules.some(r => r.k === 'avgift') && seg.cls !== 'general') out.unshift(seg.rate && seg.rate.free ? 'Avgiftsfri.' : 'Ingen avgift.');
   return out;
 }
 const WHY = {
@@ -397,6 +413,93 @@ export function signPlates(seg) {
   if (max) { plates.push({ text: `${max.h} tim` }); if (max.win) plates.push(timesFor(max.win.days, max.win.from, max.win.to)); }
   if (fee && fee.boende) plates.push({ text: 'Boende' });
   groups.push({ sign: 'P', plates });
-  seg.rules.filter(r => r.k === 'servicedag').forEach(r => groups.push({ sign: 'noP', plates: [{ text: `${WD_SIGN[r.wd]} ${hh(r.from)}-${hh(r.to)}` }, ...(r.except ? [{ text: `utom ${r.except.d1}/${r.except.m1}–${r.except.d2}/${r.except.m2}` }] : [])] }));
+  seg.rules.filter(r => r.k === 'servicedag').forEach(r => groups.push({ sign: 'noP', plates: [{ text: `${WD_SIGN[r.wd]} ${hh(r.from)}-${hh(r.to)}` }, ...(r.except ? [{ text: `utom ${r.except.d1}/${r.except.m1}–${r.except.d2}/${r.except.m2}` }] : []), ...(r.only ? [{ text: `${r.only.d1}/${r.only.m1}–${r.only.d2}/${r.only.m2}` }] : [])] }));
   return groups;
+}
+
+// ---------- gator utan föreskrifter (OpenStreetMap) ----------
+// Gator där staden saknar parkeringsföreskrifter följer de allmänna reglerna i trafikförordningen:
+// högst 24 timmar i följd på vardagar, inte inom 10 m från korsning. Gatunätet hämtas från OpenStreetMap.
+export const GENERAL_HIGHWAYS = ['residential', 'unclassified', 'living_street', 'tertiary'];
+const NO_PARK = v => /^(no|no_parking|no_stopping|separate)$/i.test(String(v || ''));
+function osmNoParking(tags) {
+  for (const side of ['both', 'left', 'right']) {
+    if (NO_PARK(tags[`parking:${side}`]) || NO_PARK(tags[`parking:${side}:restriction`]) || NO_PARK(tags[`parking:lane:${side}`])) return true;
+  }
+  return /^(private|no)$/.test(tags.access || '') || tags.area === 'yes';
+}
+function cutLine(coords, pieceM) {
+  const out = [];
+  let cur = [coords[0]], acc = 0;
+  for (let i = 1; i < coords.length; i++) {
+    let a = coords[i - 1]; const b = coords[i];
+    let segLen = lengthM([[a, b]]);
+    while (acc + segLen >= pieceM) {
+      const t = (pieceM - acc) / segLen;
+      const p = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+      cur.push(p); out.push(cur); cur = [p]; a = p; segLen = lengthM([[a, b]]); acc = 0;
+    }
+    cur.push(b); acc += segLen;
+  }
+  if (cur.length > 1 && acc > 3) out.push(cur);
+  return out;
+}
+export function generalSegments(osm, ltf, opts = {}) {
+  const ways = (osm?.elements || []).filter(e => e.type === 'way' && e.geometry && e.tags && e.tags.name && GENERAL_HIGHWAYS.includes(e.tags.highway));
+  const ltfStreets = new Set(ltf.filter(s => s.cls !== 'hcp').map(s => (s.street || '').toLowerCase()));
+  // Korsning = nod som delas av vägar med olika namn (en gata som bara är uppdelad i flera delar räknas inte).
+  // Övergångsställen (highway=crossing) behandlas likadant.
+  const nodeNames = new Map(), nodePos = new Map();
+  for (const w of (osm?.elements || [])) if (w.type === 'way' && w.nodes && w.geometry) w.nodes.forEach((n, i) => {
+    if (!nodeNames.has(n)) nodeNames.set(n, new Set());
+    nodeNames.get(n).add(w.tags?.name || 'way' + w.id);
+    if (w.geometry[i]) nodePos.set(n, [w.geometry[i].lon, w.geometry[i].lat]);
+  });
+  const junctions = [];
+  for (const [n, names] of nodeNames) if (names.size > 1 && nodePos.has(n)) junctions.push(nodePos.get(n));
+  for (const e of (osm?.elements || [])) if (e.type === 'node' && e.tags && e.tags.highway === 'crossing') junctions.push([e.lon, e.lat]);
+  const ltfLines = ltf.flatMap(s => s.lines);
+  const out = [];
+  for (const w of ways) {
+    const name = w.tags.name;
+    if (ltfStreets.has(name.toLowerCase())) continue;   // gatan har föreskrifter: lita bara på dem
+    if (osmNoParking(w.tags)) continue;
+    const coords = w.geometry.map(g => [g.lon, g.lat]);
+    // 5 m-bitar; släng bitar inom 10 m från korsning eller nära en sträcka med föreskrift, foga ihop resten
+    const runs = []; let run = null;
+    for (const bit of cutLine(coords, 5)) {
+      const m = midpoint([bit]);
+      const bad = junctions.some(j => distToLines(m, [[j, j]]) < 10) || (ltfLines.length && distToLines(m, ltfLines) < 8);
+      if (bad) { if (run) { runs.push(run); run = null; } continue; }
+      if (!run) run = [...bit]; else run.push(...bit.slice(1));
+    }
+    if (run) runs.push(run);
+    let i = 0;
+    for (const r of runs) for (const piece of cutLine(r, 40)) {
+      const lines = [piece], len = lengthM(lines);
+      if (len < 6) continue;
+      out.push({
+        id: `osm.${w.id}.${i++}`, kind: 'osm', cls: 'general', p: { OSM_ID: w.id, highway: w.tags.highway, name }, raws: [{ OSM_ID: w.id, highway: w.tags.highway, name }],
+        lines, street: name, address: name, district: '', pdistrict: '', type: 'Allmänna regler',
+        vehicle: 'fordon', citation: '', rdt: '', otherInfo: '', rate: null, citations: [],
+        rules: [{ k: 'maxtid', h: 24, win: { days: ['v'], from: 0, to: 24 } }],
+        lengthM: len, spots: Math.max(1, Math.round(len / 5.5) * 2), mid: midpoint(lines),
+      });
+    }
+  }
+  return out;
+}
+// Kopplar servicedagar (från stadens servicedagar-tjänst) till gator utan föreskrifter.
+export function attachService(segs, servicedagar) {
+  const sds = (servicedagar?.features || []).map(f => ({ lines: geomLines(f.geometry), street: (f.properties.STREET_NAME || '').toLowerCase(), r: serviceFromServicedagar(f.properties), p: f.properties })).filter(x => x.r && x.lines.length);
+  for (const s of segs) for (const sd of sds) {
+    if (sd.street && sd.street !== s.street.toLowerCase()) continue;
+    if (distToLines(s.mid, sd.lines) > 15) continue;
+    if (!s.rules.some(x => x.k === 'servicedag' && x.wd === sd.r.wd && x.from === sd.r.from)) {
+      s.rules.push(sd.r);
+      if (sd.p.CITATION && !s.citations.some(c => c.c === sd.p.CITATION)) s.citations.push({ c: sd.p.CITATION, u: sd.p.RDT_URL || '' });
+      s.raws.push(sd.p);
+    }
+  }
+  return segs;
 }
